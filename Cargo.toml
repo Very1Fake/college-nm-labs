@@ -1,0 +1,14 @@
+[package]
+name = "nm-labs"
+authors = ["Timur Israpilov <very1fake.coder@gmail.com>"]
+license = "GPL-3.0-only"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+
+[profile.final]
+inherits = "release"
+lto = true
+codegen-units = 1
