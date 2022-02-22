@@ -1,6 +1,9 @@
 use std::{fmt, ops::Mul};
 
-use super::{variable::{OperableType, VariableName, Scope}, expression::Expression};
+use super::{
+    expression::Expression,
+    variable::{OperableType, Scope, VariableName},
+};
 
 #[derive(Debug)]
 pub enum TermError {
@@ -31,11 +34,13 @@ impl Term {
         match &self {
             Term::Constant(value) => Ok(*value),
             Term::Variable(coef, name) => match scope.get(name) {
-                Some(var) => if *coef == 0.0 {
-                    Ok(var.inner)
-                } else {
-                    Ok(var.inner.mul(coef))
-                },
+                Some(var) => {
+                    if *coef == 0.0 {
+                        Ok(var.inner)
+                    } else {
+                        Ok(var.inner.mul(coef))
+                    }
+                }
                 None => Err(TermError::VariableNotFound(name.clone())),
             },
             Term::Exponent(term, exp) => Ok(term.eval(scope)?.powf(*exp)),
@@ -58,20 +63,22 @@ impl Default for Term {
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        use Term::*;
+
         match self {
-            Term::Constant(num) => f.write_str(&num.to_string()),
-            Term::Variable(num, name) => {
+            Constant(num) => f.write_str(&num.to_string()),
+            Variable(num, name) => {
                 if *num != 1.0 {
                     f.write_str(&num.to_string())?;
                 }
                 f.write_str(name.as_str())
             }
-            Term::Exponent(term, exp) => {
+            Exponent(term, exp) => {
                 term.fmt(f)?;
                 write!(f, "^{exp}")
             }
-            Term::Function(_, _) => unreachable!(),
-            Term::Brackets(_) => unreachable!(),
+            Function(_, _) => unreachable!(),
+            Brackets(_) => unreachable!(),
         }
     }
 }

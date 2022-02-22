@@ -1,4 +1,7 @@
-use std::{fmt, ops::{Sub, Add, Mul, Div}};
+use std::{
+    fmt,
+    ops::{Add, Div, Mul, Sub},
+};
 
 use itertools::{EitherOrBoth, Itertools};
 use smallvec::SmallVec;
@@ -6,7 +9,7 @@ use smallvec::SmallVec;
 use super::{
     ops::Operation,
     term::{Term, TermError},
-    variable::{Scope, VariableName, OperableType},
+    variable::{OperableType, Scope, VariableName},
     INLINED,
 };
 
@@ -19,8 +22,8 @@ pub enum ExpressionError {
 
 #[derive(Default, Debug)]
 pub struct Expression {
-    terms: SmallVec<[Term; INLINED]>,
-    ops: SmallVec<[(Operation, (usize, usize)); INLINED]>,
+    pub(super) terms: SmallVec<[Term; INLINED]>,
+    pub(super) ops: SmallVec<[(Operation, (usize, usize)); INLINED]>,
 }
 
 impl Expression {
@@ -30,12 +33,16 @@ impl Expression {
         } else {
             // Operation calculation
             let result = self.ops.iter().try_fold(0.0, |_, (op, (lhs, rhs))| {
-                let lhs =  match self.terms.get(*lhs) {
-                    Some(value) => value.eval(scope).map_err(|err| ExpressionError::TermError(err))?,
+                let lhs = match self.terms.get(*lhs) {
+                    Some(value) => value
+                        .eval(scope)
+                        .map_err(|err| ExpressionError::TermError(err))?,
                     None => return Err(ExpressionError::TermNotFound((op.clone(), *lhs))),
                 };
-                let rhs =  match self.terms.get(*rhs) {
-                    Some(value) => value.eval(scope).map_err(|err| ExpressionError::TermError(err))?,
+                let rhs = match self.terms.get(*rhs) {
+                    Some(value) => value
+                        .eval(scope)
+                        .map_err(|err| ExpressionError::TermError(err))?,
                     None => return Err(ExpressionError::TermNotFound((op.clone(), *rhs))),
                 };
 
@@ -106,10 +113,13 @@ mod tests {
             ops: smallvec![(Operation::Add, (0, 1))],
         };
         let mut scope = BTreeMap::default();
-        scope.insert("x".into(), Variable {
-            name: "x".into(),
-            inner: 4.5,
-        });
+        scope.insert(
+            "x".into(),
+            Variable {
+                name: "x".into(),
+                inner: 4.5,
+            },
+        );
 
         assert_eq!(expr_zero.eval(&scope)?, 0.0);
         assert_eq!(expr.eval(&scope)?, 21.75);

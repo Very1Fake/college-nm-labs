@@ -1,3 +1,4 @@
+// TODO: Add modulo
 #[derive(PartialEq, Clone, Debug)]
 pub enum Operation {
     Sub,
@@ -8,20 +9,24 @@ pub enum Operation {
 
 impl Operation {
     pub fn priority(&self) -> u8 {
+        use Operation::*;
+
         match self {
-            Operation::Sub => 0,
-            Operation::Add => 1,
-            Operation::Mul => 2,
-            Operation::Div => 3,
+            Sub => 0,
+            Add => 1,
+            Mul => 2,
+            Div => 3,
         }
     }
 
     pub fn as_pretty(&self) -> &str {
+        use Operation::*;
+
         match self {
-            Operation::Sub => " - ",
-            Operation::Add => " + ",
-            Operation::Mul => " * ",
-            Operation::Div => " / ",
+            Sub => " - ",
+            Add => " + ",
+            Mul => " * ",
+            Div => " / ",
         }
     }
 }
