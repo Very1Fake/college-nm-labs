@@ -1,8 +1,9 @@
 mod expression;
+pub mod method;
 mod ops;
-mod parser;
-mod term;
-mod variable;
+pub mod parser;
+pub mod term;
+pub mod variable;
 
 pub const INLINED: usize = 8;
 

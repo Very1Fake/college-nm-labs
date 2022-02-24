@@ -1,14 +1,8 @@
-[package]
-name = "nm-labs"
-authors = ["Timur Israpilov <very1fake.coder@gmail.com>"]
-license = "GPL-3.0-only"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-itertools = "0.10"
-smallvec = "1.8"
-smartstring = "0.2"
+[workspace]
+members = [
+    "math",
+    "cli"
+]
 
 [profile.final]
 inherits = "release"

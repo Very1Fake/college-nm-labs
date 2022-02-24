@@ -87,7 +87,7 @@ impl fmt::Display for Term {
 
 #[cfg(test)]
 mod tests {
-    use crate::math::variable::Scope;
+    use crate::variable::Scope;
 
     use super::{Term, TermError};
 

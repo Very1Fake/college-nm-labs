@@ -20,10 +20,16 @@ pub enum ExpressionError {
     TermError(TermError),
 }
 
+// #[derive(Debug)]
+// pub enum Statement {
+//     Expression(Expression),
+//     Equation(Equation),
+// }
+
 #[derive(Default, Debug)]
 pub struct Expression {
-    pub(super) terms: SmallVec<[Term; INLINED]>,
-    pub(super) ops: SmallVec<[(Operation, (usize, usize)); INLINED]>,
+    pub(crate) terms: SmallVec<[Term; INLINED]>,
+    pub(crate) ops: SmallVec<[(Operation, (usize, usize)); INLINED]>,
 }
 
 impl Expression {
@@ -34,15 +40,11 @@ impl Expression {
             // Operation calculation
             let result = self.ops.iter().try_fold(0.0, |_, (op, (lhs, rhs))| {
                 let lhs = match self.terms.get(*lhs) {
-                    Some(value) => value
-                        .eval(scope)
-                        .map_err(|err| ExpressionError::TermError(err))?,
+                    Some(value) => value.eval(scope).map_err(ExpressionError::TermError)?,
                     None => return Err(ExpressionError::TermNotFound((op.clone(), *lhs))),
                 };
                 let rhs = match self.terms.get(*rhs) {
-                    Some(value) => value
-                        .eval(scope)
-                        .map_err(|err| ExpressionError::TermError(err))?,
+                    Some(value) => value.eval(scope).map_err(ExpressionError::TermError)?,
                     None => return Err(ExpressionError::TermNotFound((op.clone(), *rhs))),
                 };
 
@@ -81,9 +83,11 @@ impl fmt::Display for Expression {
 
 #[derive(Debug)]
 pub struct Equation {
-    lhs: Expression,
-    rhs: Expression,
+    pub lhs: Expression,
+    pub rhs: Expression,
 }
+
+// -------------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -91,7 +95,7 @@ mod tests {
 
     use smallvec::smallvec;
 
-    use crate::math::{ops::Operation, term::Term, variable::Variable};
+    use crate::{ops::Operation, term::Term, variable::Variable};
 
     use super::{Expression, ExpressionError};
 

@@ -2,7 +2,7 @@ use std::{iter::Peekable, str::Chars};
 
 use smallvec::SmallVec;
 
-use crate::math::variable::OperableType;
+use crate::variable::OperableType;
 
 const INLINE: usize = 16;
 
@@ -39,6 +39,8 @@ pub enum Token {
     PowerOf,
     /// `;`
     Semicolon,
+    /// `,`
+    Comma,
     /// End Of File
     EOF,
     Error(TokenError),
@@ -139,6 +141,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 
                 // Reserved
                 (';', _) => return Some(Token::Semicolon),
+                (',', _) => return Some(Token::Comma),
 
                 (ch, _) if ch.is_whitespace() => (),
                 (ch, _) => return Some(Token::Error(TokenError::UnexpectedInput(ch.to_string()))),
@@ -162,7 +165,7 @@ mod tests {
 
     #[test]
     fn stream_simple() {
-        let script = "( -+*/^ ) \n ;";
+        let script = "( -+*/^ ) \n ;,";
 
         assert_eq!(
             Tokenizer::new(&script)
@@ -177,7 +180,8 @@ mod tests {
                 Token::PowerOf,
                 Token::RightParen,
                 Token::NewLine,
-                Token::Semicolon
+                Token::Semicolon,
+                Token::Comma,
             ]
         );
     }
