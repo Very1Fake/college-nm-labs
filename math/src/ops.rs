@@ -1,32 +1,51 @@
+use core::ops::{Add, Div, Mul, Sub};
+
+use crate::variable::OpType;
+
 // TODO: Add modulo
-#[derive(PartialEq, Clone, Debug)]
-pub enum Operation {
-    Sub,
+#[derive(PartialOrd, PartialEq, Clone, Debug)]
+pub enum Ops {
+    Sub = 0,
     Add,
     Mul,
     Div,
+    Pow,
 }
 
-impl Operation {
-    pub fn priority(&self) -> u8 {
-        use Operation::*;
+impl Ops {
+    pub fn as_str(&self) -> &str {
+        use Ops::*;
 
         match self {
-            Sub => 0,
-            Add => 1,
-            Mul => 2,
-            Div => 3,
+            Sub => "-",
+            Add => "+",
+            Mul => "*",
+            Div => "/",
+            Pow => "^",
         }
     }
 
-    pub fn as_pretty(&self) -> &str {
-        use Operation::*;
+    pub fn calc(&self, lhs: OpType, rhs: OpType) -> OpType {
+        use Ops::*;
 
         match self {
-            Sub => " - ",
-            Add => " + ",
-            Mul => " * ",
-            Div => " / ",
+            Sub => lhs.sub(rhs),
+            Add => lhs.add(rhs),
+            Mul => lhs.mul(rhs),
+            Div => lhs.div(rhs),
+            Pow => lhs.powf(rhs),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ops::Ops;
+
+    #[test]
+    fn ops_ord() {
+        assert!(Ops::Add < Ops::Mul);
+        assert!(Ops::Sub < Ops::Div);
+        assert!(Ops::Pow > Ops::Mul);
     }
 }

@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 
 use smartstring::{LazyCompact, SmartString};
 
-pub type OperableType = f32; // Only floats are available
-pub type VariableName = SmartString<LazyCompact>;
-pub type Scope = BTreeMap<VariableName, Variable>;
+/// Operand Type
+pub type OpType = f64; // Only floats are available
+pub type VarName = SmartString<LazyCompact>;
+pub type Scope = BTreeMap<VarName, Var>;
 
 #[derive(Debug)]
-pub struct Variable {
-    pub name: VariableName,
-    pub inner: OperableType,
+pub struct Var {
+    pub name: VarName,
+    pub inner: OpType,
 }

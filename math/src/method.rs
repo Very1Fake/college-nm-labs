@@ -1,8 +1,12 @@
-use std::time::{Duration, Instant};
+use core::fmt;
+use std::{
+    fmt::Debug,
+    time::{Duration, Instant},
+};
 
 use crate::{
-    expression::{Expression, ExpressionError},
-    variable::{OperableType, Scope, Variable},
+    expression::{Evaluable, EvaluationError, Expr},
+    variable::{OpType, Scope, Var},
 };
 
 const MAX_ITERS_DEFAULT: u128 = 1_000_000;
@@ -10,7 +14,7 @@ const MAX_ITERS_DEFAULT: u128 = 1_000_000;
 #[derive(Debug)]
 pub enum MethodError {
     IterationsExceed(u128),
-    ExpressionError(ExpressionError),
+    EvaluationError(EvaluationError),
     Other(String),
 }
 
@@ -22,32 +26,35 @@ pub struct CallStats {
 
 #[derive(Debug)]
 pub struct MethodResult {
-    pub inner: (OperableType, OperableType),
+    pub inner: (OpType, OpType),
     pub stats: CallStats,
 }
 
 // -------------------------------------------------------------------------------------------------
 
-#[derive(Debug)]
-pub enum MethodEquation<F>
-where
-    F: Fn(OperableType) -> OperableType,
-{
-    Math(Box<Expression>),
-    External(F),
+pub enum MethodEquation {
+    Math(Expr),
+    External(Box<dyn Fn(OpType) -> OpType>),
 }
 
-impl<F> MethodEquation<F>
-where
-    F: Fn(OperableType) -> OperableType,
-{
-    pub fn eval(&self, x: OperableType) -> Result<OperableType, ExpressionError> {
+// Auto generated
+impl Debug for MethodEquation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Math(arg0) => f.debug_tuple("Math").field(arg0).finish(),
+            Self::External(_) => f.debug_tuple("External").finish(),
+        }
+    }
+}
+
+impl MethodEquation {
+    pub fn eval(&self, x: OpType) -> Result<OpType, EvaluationError> {
         match self {
             MethodEquation::Math(expr) => {
                 let mut scope = Scope::default();
                 scope.insert(
                     "x".into(),
-                    Variable {
+                    Var {
                         name: "x".into(),
                         inner: x,
                     },
@@ -100,16 +107,16 @@ impl Method {
 
     pub fn bisection(
         mut self,
-        f: MethodEquation<impl Fn(OperableType) -> OperableType>,
-        range: (OperableType, OperableType),
-        epsilon: OperableType,
+        f: MethodEquation,
+        range: (OpType, OpType),
+        epsilon: OpType,
     ) -> Result<MethodResult, MethodError> {
         let mut a = range.0;
         let mut b = range.1;
 
         if sign_diff(
-            f.eval(a).map_err(MethodError::ExpressionError)?,
-            f.eval(b).map_err(MethodError::ExpressionError)?,
+            f.eval(a).map_err(MethodError::EvaluationError)?,
+            f.eval(b).map_err(MethodError::EvaluationError)?,
         ) {
             while self.iterations != self.max_iters {
                 self.iterations += 1;
@@ -121,9 +128,9 @@ impl Method {
                     println!(
                         "Iter({}): [{a}; {b}], xi = {xi} ([{}; {}] {})",
                         self.iterations,
-                        f.eval(a).map_err(MethodError::ExpressionError)?,
-                        f.eval(b).map_err(MethodError::ExpressionError)?,
-                        f.eval(xi).map_err(MethodError::ExpressionError)?
+                        f.eval(a).map_err(MethodError::EvaluationError)?,
+                        f.eval(b).map_err(MethodError::EvaluationError)?,
+                        f.eval(xi).map_err(MethodError::EvaluationError)?
                     );
                 }
 
@@ -132,15 +139,15 @@ impl Method {
                     println!(
                         "Iter({}): Precision check |{}| < {epsilon}",
                         self.iterations,
-                        f.eval(b).map_err(MethodError::ExpressionError)?
-                            - f.eval(a).map_err(MethodError::ExpressionError)?
+                        f.eval(b).map_err(MethodError::EvaluationError)?
+                            - f.eval(a).map_err(MethodError::EvaluationError)?
                     );
                 }
 
                 // Compare signs to clip the range
                 if sign_diff(
-                    f.eval(a).map_err(MethodError::ExpressionError)?,
-                    f.eval(xi).map_err(MethodError::ExpressionError)?,
+                    f.eval(a).map_err(MethodError::EvaluationError)?,
+                    f.eval(xi).map_err(MethodError::EvaluationError)?,
                 ) {
                     b = xi;
                 } else {
@@ -148,8 +155,8 @@ impl Method {
                 }
 
                 // Check precision
-                if (f.eval(b).map_err(MethodError::ExpressionError)?
-                    - f.eval(a).map_err(MethodError::ExpressionError)?)
+                if (f.eval(b).map_err(MethodError::EvaluationError)?
+                    - f.eval(a).map_err(MethodError::EvaluationError)?)
                 .abs()
                     < epsilon
                 {
@@ -157,7 +164,7 @@ impl Method {
                     return Ok(MethodResult {
                         inner: (
                             result,
-                            f.eval(result).map_err(MethodError::ExpressionError)?,
+                            f.eval(result).map_err(MethodError::EvaluationError)?,
                         ),
                         stats: CallStats {
                             elapsed: self.start.elapsed(),
@@ -185,7 +192,7 @@ impl Default for Method {
 // -------------------------------------------------------------------------------------------------
 
 #[inline(always)]
-fn sign_diff(lhs: OperableType, rhs: OperableType) -> bool {
+fn sign_diff(lhs: OpType, rhs: OpType) -> bool {
     lhs * rhs < 0.0
 }
 

@@ -1,90 +1,306 @@
-use std::{
+use core::{
+    f64::consts::E,
     fmt,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
 };
 
-use itertools::{EitherOrBoth, Itertools};
-use smallvec::SmallVec;
+use crate::function::Func;
 
 use super::{
-    ops::Operation,
-    term::{Term, TermError},
-    variable::{OperableType, Scope, VariableName},
-    INLINED,
+    ops::Ops,
+    variable::{OpType, Scope, VarName},
 };
 
 #[derive(Debug)]
-pub enum ExpressionError {
-    VariableNotFound(VariableName),
-    TermNotFound((Operation, usize)),
-    TermError(TermError),
+pub enum EvaluationError {
+    VariableNotFound(VarName),
+    ZeroDivision,
 }
 
-// #[derive(Debug)]
-// pub enum Statement {
-//     Expression(Expression),
-//     Equation(Equation),
-// }
-
-#[derive(Default, Debug)]
-pub struct Expression {
-    pub(crate) terms: SmallVec<[Term; INLINED]>,
-    pub(crate) ops: SmallVec<[(Operation, (usize, usize)); INLINED]>,
+pub trait Evaluable {
+    fn eval(&self, scope: &Scope) -> Result<OpType, EvaluationError>;
 }
 
-impl Expression {
-    pub fn eval(&self, scope: &Scope) -> Result<OperableType, ExpressionError> {
-        if self.is_zero() {
-            Ok(0.0)
-        } else {
-            // Operation calculation
-            let result = self.ops.iter().try_fold(0.0, |_, (op, (lhs, rhs))| {
-                let lhs = match self.terms.get(*lhs) {
-                    Some(value) => value.eval(scope).map_err(ExpressionError::TermError)?,
-                    None => return Err(ExpressionError::TermNotFound((op.clone(), *lhs))),
-                };
-                let rhs = match self.terms.get(*rhs) {
-                    Some(value) => value.eval(scope).map_err(ExpressionError::TermError)?,
-                    None => return Err(ExpressionError::TermNotFound((op.clone(), *rhs))),
-                };
-
-                Ok(match op {
-                    Operation::Sub => lhs.sub(rhs),
-                    Operation::Add => lhs.add(rhs),
-                    Operation::Mul => lhs.mul(rhs),
-                    Operation::Div => lhs.div(rhs),
-                })
-            })?;
-
-            Ok(result)
-        }
-    }
-
-    pub fn is_zero(&self) -> bool {
-        self.terms.is_empty() && self.ops.is_empty()
-    }
-}
-
-impl fmt::Display for Expression {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for i in self.terms.iter().zip_longest(self.ops.clone()) {
-            match i {
-                EitherOrBoth::Both(term, (op, _)) => {
-                    term.fmt(f)?;
-                    f.write_str(op.as_pretty())?;
-                }
-                EitherOrBoth::Left(term) => term.fmt(f)?,
-                EitherOrBoth::Right(_) => unreachable!(),
-            };
-        }
-        Ok(())
-    }
-}
+// -------------------------------------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct Equation {
-    pub lhs: Expression,
-    pub rhs: Expression,
+pub enum MathConst {
+    E,
+}
+
+impl MathConst {
+    /// Get math constant value
+    pub fn value(&self) -> OpType {
+        match self {
+            MathConst::E => E,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            MathConst::E => "e",
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub enum Expr {
+    Const(OpType),
+    MathConst(MathConst),
+    Var(VarName),
+    Op(Ops, Box<(Self, Self)>),
+    Func(Func, Vec<Self>),
+    Brackets(Box<Expr>),
+}
+
+impl Expr {
+    #[inline]
+    pub fn var(name: impl Into<VarName>) -> Self {
+        Self::Var(name.into())
+    }
+}
+
+impl Evaluable for Expr {
+    fn eval(&self, scope: &Scope) -> Result<OpType, EvaluationError> {
+        use Expr::*;
+
+        match self {
+            Const(value) => Ok(*value),
+            MathConst(constant) => Ok(constant.value()),
+            Var(name) => match scope.get(name) {
+                Some(var) => Ok(var.inner),
+                None => Err(EvaluationError::VariableNotFound(name.clone())),
+            },
+            Op(op, ops) => Ok(op.calc(ops.0.eval(scope)?, ops.1.eval(scope)?)),
+            Func(func, args) => Ok(func.eval(
+                args.iter()
+                    .map(|expr| expr.eval(scope))
+                    .collect::<Result<Vec<OpType>, EvaluationError>>()?,
+            )),
+            Brackets(expr) => expr.eval(scope),
+        }
+    }
+}
+
+impl Default for Expr {
+    fn default() -> Self {
+        Self::Const(1.0)
+    }
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Const(num) => f.write_str(&num.to_string()),
+            Self::MathConst(constant) => f.write_str(constant.as_str()),
+            Self::Var(name) => f.write_str(name.as_str()),
+            Self::Op(op, ops) => match op {
+                Ops::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
+                Ops::Mul => {
+                    if let Expr::Var(_) = ops.1 {
+                        ops.0.fmt(f)?;
+                        ops.1.fmt(f)
+                    } else {
+                        write!(f, "{} {} {}", ops.0, op.as_str(), ops.1)
+                    }
+                }
+                _ => write!(f, "{} {} {}", ops.0, op.as_str(), ops.1),
+            },
+            Self::Func(func, args) => {
+                f.write_str(func.as_str())?;
+                f.write_str("(")?;
+                for (i, expr) in args.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    expr.fmt(f)?;
+                }
+                f.write_str(")")
+            }
+            Self::Brackets(expr) => write!(f, "({expr})"),
+        }
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+
+impl Add for Expr {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::Op(
+            Ops::Add,
+            Box::new((self.brace_if(Ops::Add), rhs.brace_if(Ops::Sub))),
+        )
+    }
+}
+
+impl Sub for Expr {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::Op(
+            Ops::Sub,
+            Box::new((self.brace_if(Ops::Sub), rhs.brace_if(Ops::Sub))),
+        )
+    }
+}
+
+impl Mul for Expr {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self::Op(
+            Ops::Mul,
+            Box::new((self.brace_if(Ops::Mul), rhs.brace_if(Ops::Mul))),
+        )
+    }
+}
+
+impl Div for Expr {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Self::Op(
+            Ops::Div,
+            Box::new((self.brace_if(Ops::Div), rhs.brace_if(Ops::Div))),
+        )
+    }
+}
+
+impl Neg for Expr {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        self * -1.0
+    }
+}
+
+impl Add<OpType> for Expr {
+    type Output = Self;
+
+    fn add(self, rhs: OpType) -> Self::Output {
+        Self::Op(
+            Ops::Add,
+            Box::new((self.brace_if(Ops::Add), Self::Const(rhs))),
+        )
+    }
+}
+
+impl Sub<OpType> for Expr {
+    type Output = Self;
+
+    fn sub(self, rhs: OpType) -> Self::Output {
+        Self::Op(
+            Ops::Sub,
+            Box::new((self.brace_if(Ops::Sub), Self::Const(rhs))),
+        )
+    }
+}
+
+impl Mul<OpType> for Expr {
+    type Output = Self;
+
+    fn mul(self, rhs: OpType) -> Self::Output {
+        Self::Op(
+            Ops::Mul,
+            Box::new((self.brace_if(Ops::Mul), Self::Const(rhs))),
+        )
+    }
+}
+
+impl Div<OpType> for Expr {
+    type Output = Self;
+
+    fn div(self, rhs: OpType) -> Self::Output {
+        Self::Op(
+            Ops::Div,
+            Box::new((self.brace_if(Ops::Div), Self::Const(rhs))),
+        )
+    }
+}
+
+impl Add<Expr> for OpType {
+    type Output = Expr;
+
+    fn add(self, rhs: Expr) -> Self::Output {
+        Expr::Op(
+            Ops::Add,
+            Box::new((Expr::Const(self), rhs.brace_if(Ops::Add))),
+        )
+    }
+}
+
+impl Sub<Expr> for OpType {
+    type Output = Expr;
+
+    fn sub(self, rhs: Expr) -> Self::Output {
+        Expr::Op(
+            Ops::Sub,
+            Box::new((Expr::Const(self), rhs.brace_if(Ops::Sub))),
+        )
+    }
+}
+
+impl Mul<Expr> for OpType {
+    type Output = Expr;
+
+    fn mul(self, rhs: Expr) -> Self::Output {
+        Expr::Op(
+            Ops::Mul,
+            Box::new((Expr::Const(self), rhs.brace_if(Ops::Mul))),
+        )
+    }
+}
+
+impl Div<Expr> for OpType {
+    type Output = Expr;
+
+    fn div(self, rhs: Expr) -> Self::Output {
+        Expr::Op(
+            Ops::Div,
+            Box::new((Expr::Const(self), rhs.brace_if(Ops::Div))),
+        )
+    }
+}
+
+impl From<OpType> for Expr {
+    fn from(num: OpType) -> Self {
+        Expr::Const(num)
+    }
+}
+
+impl Expr {
+    /// Wraps self with parentheses if the given `Ops` has a higher priority
+    pub fn brace_if(self, op: Ops) -> Self {
+        match &self {
+            Self::Op(inner, _) if *inner < op => return Self::Brackets(Box::new(self)),
+            _ => (),
+        }
+
+        self
+    }
+
+    pub fn pow(self, rhs: Self) -> Self {
+        Expr::Op(
+            Ops::Pow,
+            Box::new((self.brace_if(Ops::Pow), rhs.brace_if(Ops::Pow))),
+        )
+    }
+
+    pub fn powf(self, rhs: OpType) -> Self {
+        Expr::Op(Ops::Pow, Box::new((self.brace_if(Ops::Pow), rhs.into())))
+    }
+
+    pub fn sin(self) -> Self {
+        Expr::Func(Func::Sin, vec![self])
+    }
+
+    pub fn cos(self) -> Self {
+        Expr::Func(Func::Cos, vec![self])
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -93,40 +309,125 @@ pub struct Equation {
 mod tests {
     use std::collections::BTreeMap;
 
-    use smallvec::smallvec;
+    use crate::{
+        expression::{Evaluable, MathConst},
+        variable::{Scope, Var},
+    };
 
-    use crate::{ops::Operation, term::Term, variable::Variable};
+    use super::{EvaluationError, Expr};
 
-    use super::{Expression, ExpressionError};
+    // Formats
 
     #[test]
-    fn print_expr() {
-        let expr = Expression {
-            terms: smallvec![Term::var(2.0, "x"), Term::Constant(12.75)],
-            ops: smallvec![(Operation::Add, (0, 1))],
-        };
+    fn fmt_const() {
+        let constant = Expr::Const(2.5);
+        let math_const = Expr::MathConst(MathConst::E);
 
-        assert_eq!(format!("{expr}"), "2x + 12.75");
+        assert_eq!(format!("{constant}"), "2.5".to_string());
+        assert_eq!(format!("{math_const}"), "e".to_string());
     }
 
     #[test]
-    fn eval() -> Result<(), ExpressionError> {
-        let expr_zero = Expression::default();
-        let expr = Expression {
-            terms: smallvec![Term::var(2.0, "x"), Term::Constant(12.75)],
-            ops: smallvec![(Operation::Add, (0, 1))],
-        };
+    fn fmt_var() {
+        let var = Expr::var("x");
+        let var_coef = 4.75 * Expr::var("y");
+        let var_no_coef = 12.5 + Expr::var("z");
+
+        assert_eq!(format!("{var}"), "x".to_string());
+        assert_eq!(format!("{var_coef}"), "4.75y".to_string());
+        assert_eq!(format!("{var_no_coef}"), "12.5 + z".to_string());
+    }
+
+    #[test]
+    fn fmt_exp() {
+        let exp_const = Expr::Const(25.0).powf(2.0);
+        let exp_var = Expr::var("z").powf(4.0);
+        let exp_e = Expr::MathConst(MathConst::E).pow(Expr::var("x"));
+
+        assert_eq!(format!("{exp_const}"), "25^2".to_string());
+        assert_eq!(format!("{exp_var}"), "z^4".to_string());
+        assert_eq!(format!("{exp_e}"), "e^x".to_string());
+    }
+
+    #[test]
+    fn fmt_expr() {
+        let expr_1 = Expr::Const(2.0) * Expr::var("x") + Expr::Const(12.75);
+        let expr_2 = (4.5 + Expr::var("x")).powf(2.0) / 2.5;
+        let expr_3 = Expr::var("x") * Expr::MathConst(MathConst::E).pow(Expr::var("x")).sin();
+
+        assert_eq!(format!("{expr_1}"), "2x + 12.75");
+        assert_eq!(format!("{expr_2}"), "(4.5 + x)^2 / 2.5");
+        assert_eq!(format!("{expr_3}"), "x * sin(e^x)");
+    }
+
+    // Evaluations
+
+    #[test]
+    fn eval_const() -> Result<(), EvaluationError> {
+        let c = Expr::Const(2.0);
+
+        assert_eq!(c.eval(&Scope::default())?, 2.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn eval_var() -> Result<(), EvaluationError> {
+        let var = Expr::var("x");
+        let var_coef = 3.2 * Expr::var("x");
+
+        let mut scope = Scope::default();
+        scope.insert(
+            "x".into(),
+            Var {
+                name: "x".into(),
+                inner: 5.0,
+            },
+        );
+
+        assert_eq!(var.eval(&scope)?, 5.0);
+        assert_eq!(var_coef.eval(&scope)?, 16.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn eval_exp() -> Result<(), EvaluationError> {
+        let exp = Expr::Const(2.0).powf(10.0);
+
+        assert_eq!(exp.eval(&Scope::default())?, 1024.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn eval_func() -> Result<(), EvaluationError> {
+        let func_sin = Expr::Const(4.0).sin();
+        let func_cos = Expr::Const(5.0).cos();
+
+        assert_eq!(func_sin.eval(&Scope::default())?, -0.7568024953079282);
+        assert_eq!(func_cos.eval(&Scope::default())?, 0.28366218546322625);
+
+        Ok(())
+    }
+
+    #[test]
+    fn eval_expr() -> Result<(), EvaluationError> {
+        let expr_1 = 2.0 * Expr::var("x") + 12.75;
+        let expr_2 = (Expr::Const(12.0) - 3.0) * 3.0 * Expr::var("x");
+        let expr_3 = (4.5 + Expr::var("x")).powf(2.0) / 2.5;
         let mut scope = BTreeMap::default();
         scope.insert(
             "x".into(),
-            Variable {
+            Var {
                 name: "x".into(),
                 inner: 4.5,
             },
         );
 
-        assert_eq!(expr_zero.eval(&scope)?, 0.0);
-        assert_eq!(expr.eval(&scope)?, 21.75);
+        assert_eq!(expr_1.eval(&scope)?, 21.75);
+        assert_eq!(expr_2.eval(&scope)?, 121.5);
+        assert_eq!(expr_3.eval(&scope)?, 32.4);
 
         Ok(())
     }

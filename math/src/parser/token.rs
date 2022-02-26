@@ -2,7 +2,7 @@ use std::{iter::Peekable, str::Chars};
 
 use smallvec::SmallVec;
 
-use crate::variable::OperableType;
+use crate::variable::OpType;
 
 const INLINE: usize = 16;
 
@@ -20,7 +20,7 @@ pub enum Token {
     /// `\n` symbol
     NewLine,
     /// Number constant
-    Number(OperableType),
+    Number(OpType),
     /// Identifier (variable or function name)
     Identifier(String),
     /// `(`
@@ -95,7 +95,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                         let out: String =
                             result.iter().filter(|&&c| c != NUMBER_SEPARATOR).collect();
 
-                        out.parse::<OperableType>()
+                        out.parse::<OpType>()
                             .map(Token::Number)
                             .unwrap_or_else(|_| {
                                 eprintln!("{}{out}", result.iter().collect::<String>());
