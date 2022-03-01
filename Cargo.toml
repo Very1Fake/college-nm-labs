@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "math",
-    "cli"
+    "cli",
+    "gui"
 ]
 
 [profile.final]

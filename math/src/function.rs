@@ -1,6 +1,6 @@
 use crate::variable::OpType;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Func {
     Sin,
     Cos,

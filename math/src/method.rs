@@ -1,8 +1,8 @@
-use core::fmt;
-use std::{
-    fmt::Debug,
-    time::{Duration, Instant},
+use core::{
+    fmt::{self, Display},
+    time::Duration,
 };
+use std::time::Instant;
 
 use crate::{
     expression::{Evaluable, EvaluationError, Expr},
@@ -32,17 +32,35 @@ pub struct MethodResult {
 
 // -------------------------------------------------------------------------------------------------
 
+type ExternalFunction = fn(OpType) -> OpType;
+
+#[derive(Clone)]
 pub enum MethodEquation {
     Math(Expr),
-    External(Box<dyn Fn(OpType) -> OpType>),
+    Internal(Box<ExternalFunction>),
+}
+
+impl Default for MethodEquation {
+    fn default() -> Self {
+        Self::Math(Expr::var("x") + 1.0)
+    }
 }
 
 // Auto generated
-impl Debug for MethodEquation {
+impl fmt::Debug for MethodEquation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Math(arg0) => f.debug_tuple("Math").field(arg0).finish(),
-            Self::External(_) => f.debug_tuple("External").finish(),
+            Self::Internal(_) => f.debug_tuple("External").finish(),
+        }
+    }
+}
+
+impl Display for MethodEquation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MethodEquation::Math(math) => math.fmt(f),
+            MethodEquation::Internal(_) => f.write_str("Internal rust function"),
         }
     }
 }
@@ -62,7 +80,7 @@ impl MethodEquation {
 
                 expr.eval(&scope)
             }
-            MethodEquation::External(f) => Ok(f(x)),
+            MethodEquation::Internal(f) => Ok(f(x)),
         }
     }
 }

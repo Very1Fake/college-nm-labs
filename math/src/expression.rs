@@ -23,7 +23,7 @@ pub trait Evaluable {
 
 // -------------------------------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum MathConst {
     E,
 }
@@ -45,7 +45,7 @@ impl MathConst {
 
 // -------------------------------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     Const(OpType),
     MathConst(MathConst),

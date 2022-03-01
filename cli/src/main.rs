@@ -6,13 +6,15 @@ use nm_math::{
     variable::OpType,
 };
 
-fn main() -> Result<(), MethodError> {
-    // Rust function
-    // Insert equation in func closure
-    let func = Box::new(|x: OpType| x + E.powf(x));
+// Rust function
+// Insert equation in func closure
+fn equation(x: OpType) -> OpType {
+    x + E.powf(x)
+}
 
+fn main() -> Result<(), MethodError> {
     let result = Method::new(100).very_verbose().bisection(
-        MethodEquation::External(func),
+        MethodEquation::Internal(Box::new(equation)),
         (-1.0, 0.0),
         0.01,
     )?;
