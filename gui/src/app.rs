@@ -1,4 +1,4 @@
-use std::{f64::consts::E, ops::RangeInclusive};
+use core::{f64::consts::E, ops::RangeInclusive};
 
 use eframe::{
     egui::{
@@ -111,17 +111,13 @@ impl EApp for App {
                         self.eq_storage.content.len(),
                         |scroll, range| {
                             for i in range {
-                                if let None = self.eq_storage.content.get(i) {
+                                if self.eq_storage.content.get(i).is_none() {
                                     continue;
                                 }
 
                                 let is_selected = {
                                     if let Some(id) = self.eq_storage.selected {
-                                        if id == i {
-                                            true
-                                        } else {
-                                            false
-                                        }
+                                        id == i
                                     } else {
                                         false
                                     }

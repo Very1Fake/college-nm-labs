@@ -4,17 +4,17 @@ use crate::variable::OpType;
 
 // TODO: Add modulo
 #[derive(PartialOrd, PartialEq, Clone, Debug)]
-pub enum Ops {
-    Sub = 0,
+pub enum Op {
+    Sub = 1,
     Add,
     Mul,
     Div,
     Pow,
 }
 
-impl Ops {
+impl Op {
     pub fn as_str(&self) -> &str {
-        use Ops::*;
+        use Op::*;
 
         match self {
             Sub => "-",
@@ -26,7 +26,7 @@ impl Ops {
     }
 
     pub fn calc(&self, lhs: OpType, rhs: OpType) -> OpType {
-        use Ops::*;
+        use Op::*;
 
         match self {
             Sub => lhs.sub(rhs),
@@ -40,12 +40,12 @@ impl Ops {
 
 #[cfg(test)]
 mod tests {
-    use crate::ops::Ops;
+    use crate::ops::Op;
 
     #[test]
     fn ops_ord() {
-        assert!(Ops::Add < Ops::Mul);
-        assert!(Ops::Sub < Ops::Div);
-        assert!(Ops::Pow > Ops::Mul);
+        assert!(Op::Add < Op::Mul);
+        assert!(Op::Sub < Op::Div);
+        assert!(Op::Pow > Op::Mul);
     }
 }

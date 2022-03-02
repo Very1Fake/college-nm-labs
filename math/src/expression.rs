@@ -4,10 +4,10 @@ use core::{
     ops::{Add, Div, Mul, Neg, Sub},
 };
 
-use crate::function::Func;
+use crate::{function::Func, token::Token};
 
 use super::{
-    ops::Ops,
+    ops::Op,
     variable::{OpType, Scope, VarName},
 };
 
@@ -23,7 +23,7 @@ pub trait Evaluable {
 
 // -------------------------------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum MathConst {
     E,
 }
@@ -41,16 +41,23 @@ impl MathConst {
             MathConst::E => "e",
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "e" => Some(Self::E),
+            _ => None,
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Expr {
     Const(OpType),
     MathConst(MathConst),
     Var(VarName),
-    Op(Ops, Box<(Self, Self)>),
+    Op(Op, Box<(Self, Self)>),
     Func(Func, Vec<Self>),
     Brackets(Box<Expr>),
 }
@@ -59,6 +66,20 @@ impl Expr {
     #[inline]
     pub fn var(name: impl Into<VarName>) -> Self {
         Self::Var(name.into())
+    }
+
+    #[must_use]
+    pub fn is_valid_postfix(&self, token: &Token) -> bool {
+        match self {
+            Expr::Const(_) => matches!(token, Token::Identifier(_)),
+            Expr::Var(_) => matches!(token, Token::LeftParen),
+            Expr::Op(Op::Mul, ops) => {
+                matches!(ops.0, Expr::Const(_))
+                    && matches!(ops.1, Expr::Var(_))
+                    && matches!(token, Token::LeftParen)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -95,10 +116,10 @@ impl fmt::Display for Expr {
         match self {
             Self::Const(num) => f.write_str(&num.to_string()),
             Self::MathConst(constant) => f.write_str(constant.as_str()),
-            Self::Var(name) => f.write_str(name.as_str()),
+            Self::Var(name) => f.write_str(name),
             Self::Op(op, ops) => match op {
-                Ops::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
-                Ops::Mul => {
+                Op::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
+                Op::Mul => {
                     if let Expr::Var(_) = ops.1 {
                         ops.0.fmt(f)?;
                         ops.1.fmt(f)
@@ -131,8 +152,8 @@ impl Add for Expr {
 
     fn add(self, rhs: Self) -> Self::Output {
         Self::Op(
-            Ops::Add,
-            Box::new((self.brace_if(Ops::Add), rhs.brace_if(Ops::Sub))),
+            Op::Add,
+            Box::new((self.brace_if(&Op::Add), rhs.brace_if(&Op::Sub))),
         )
     }
 }
@@ -142,8 +163,8 @@ impl Sub for Expr {
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self::Op(
-            Ops::Sub,
-            Box::new((self.brace_if(Ops::Sub), rhs.brace_if(Ops::Sub))),
+            Op::Sub,
+            Box::new((self.brace_if(&Op::Sub), rhs.brace_if(&Op::Sub))),
         )
     }
 }
@@ -153,8 +174,8 @@ impl Mul for Expr {
 
     fn mul(self, rhs: Self) -> Self::Output {
         Self::Op(
-            Ops::Mul,
-            Box::new((self.brace_if(Ops::Mul), rhs.brace_if(Ops::Mul))),
+            Op::Mul,
+            Box::new((self.brace_if(&Op::Mul), rhs.brace_if(&Op::Mul))),
         )
     }
 }
@@ -164,8 +185,8 @@ impl Div for Expr {
 
     fn div(self, rhs: Self) -> Self::Output {
         Self::Op(
-            Ops::Div,
-            Box::new((self.brace_if(Ops::Div), rhs.brace_if(Ops::Div))),
+            Op::Div,
+            Box::new((self.brace_if(&Op::Div), rhs.brace_if(&Op::Div))),
         )
     }
 }
@@ -174,7 +195,11 @@ impl Neg for Expr {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        self * -1.0
+        // TODO: Optimize further
+        match self {
+            Expr::Const(num) => Expr::Const(-num),
+            _ => self,
+        }
     }
 }
 
@@ -183,8 +208,8 @@ impl Add<OpType> for Expr {
 
     fn add(self, rhs: OpType) -> Self::Output {
         Self::Op(
-            Ops::Add,
-            Box::new((self.brace_if(Ops::Add), Self::Const(rhs))),
+            Op::Add,
+            Box::new((self.brace_if(&Op::Add), Self::Const(rhs))),
         )
     }
 }
@@ -194,8 +219,8 @@ impl Sub<OpType> for Expr {
 
     fn sub(self, rhs: OpType) -> Self::Output {
         Self::Op(
-            Ops::Sub,
-            Box::new((self.brace_if(Ops::Sub), Self::Const(rhs))),
+            Op::Sub,
+            Box::new((self.brace_if(&Op::Sub), Self::Const(rhs))),
         )
     }
 }
@@ -205,8 +230,8 @@ impl Mul<OpType> for Expr {
 
     fn mul(self, rhs: OpType) -> Self::Output {
         Self::Op(
-            Ops::Mul,
-            Box::new((self.brace_if(Ops::Mul), Self::Const(rhs))),
+            Op::Mul,
+            Box::new((self.brace_if(&Op::Mul), Self::Const(rhs))),
         )
     }
 }
@@ -216,8 +241,8 @@ impl Div<OpType> for Expr {
 
     fn div(self, rhs: OpType) -> Self::Output {
         Self::Op(
-            Ops::Div,
-            Box::new((self.brace_if(Ops::Div), Self::Const(rhs))),
+            Op::Div,
+            Box::new((self.brace_if(&Op::Div), Self::Const(rhs))),
         )
     }
 }
@@ -227,8 +252,8 @@ impl Add<Expr> for OpType {
 
     fn add(self, rhs: Expr) -> Self::Output {
         Expr::Op(
-            Ops::Add,
-            Box::new((Expr::Const(self), rhs.brace_if(Ops::Add))),
+            Op::Add,
+            Box::new((Expr::Const(self), rhs.brace_if(&Op::Add))),
         )
     }
 }
@@ -238,8 +263,8 @@ impl Sub<Expr> for OpType {
 
     fn sub(self, rhs: Expr) -> Self::Output {
         Expr::Op(
-            Ops::Sub,
-            Box::new((Expr::Const(self), rhs.brace_if(Ops::Sub))),
+            Op::Sub,
+            Box::new((Expr::Const(self), rhs.brace_if(&Op::Sub))),
         )
     }
 }
@@ -249,8 +274,8 @@ impl Mul<Expr> for OpType {
 
     fn mul(self, rhs: Expr) -> Self::Output {
         Expr::Op(
-            Ops::Mul,
-            Box::new((Expr::Const(self), rhs.brace_if(Ops::Mul))),
+            Op::Mul,
+            Box::new((Expr::Const(self), rhs.brace_if(&Op::Mul))),
         )
     }
 }
@@ -260,8 +285,8 @@ impl Div<Expr> for OpType {
 
     fn div(self, rhs: Expr) -> Self::Output {
         Expr::Op(
-            Ops::Div,
-            Box::new((Expr::Const(self), rhs.brace_if(Ops::Div))),
+            Op::Div,
+            Box::new((Expr::Const(self), rhs.brace_if(&Op::Div))),
         )
     }
 }
@@ -274,9 +299,9 @@ impl From<OpType> for Expr {
 
 impl Expr {
     /// Wraps self with parentheses if the given `Ops` has a higher priority
-    pub fn brace_if(self, op: Ops) -> Self {
+    pub fn brace_if(self, op: &Op) -> Self {
         match &self {
-            Self::Op(inner, _) if *inner < op => return Self::Brackets(Box::new(self)),
+            Self::Op(inner, _) if inner < op => return Self::Brackets(Box::new(self)),
             _ => (),
         }
 
@@ -285,13 +310,13 @@ impl Expr {
 
     pub fn pow(self, rhs: Self) -> Self {
         Expr::Op(
-            Ops::Pow,
-            Box::new((self.brace_if(Ops::Pow), rhs.brace_if(Ops::Pow))),
+            Op::Pow,
+            Box::new((self.brace_if(&Op::Pow), rhs.brace_if(&Op::Pow))),
         )
     }
 
     pub fn powf(self, rhs: OpType) -> Self {
-        Expr::Op(Ops::Pow, Box::new((self.brace_if(Ops::Pow), rhs.into())))
+        Expr::Op(Op::Pow, Box::new((self.brace_if(&Op::Pow), rhs.into())))
     }
 
     pub fn sin(self) -> Self {
@@ -307,8 +332,6 @@ impl Expr {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use crate::{
         expression::{Evaluable, MathConst},
         variable::{Scope, Var},
@@ -377,13 +400,10 @@ mod tests {
         let var_coef = 3.2 * Expr::var("x");
 
         let mut scope = Scope::default();
-        scope.insert(
-            "x".into(),
-            Var {
-                name: "x".into(),
-                inner: 5.0,
-            },
-        );
+        scope.insert(Var {
+            name: "x".into(),
+            inner: 5.0,
+        });
 
         assert_eq!(var.eval(&scope)?, 5.0);
         assert_eq!(var_coef.eval(&scope)?, 16.0);
@@ -416,14 +436,11 @@ mod tests {
         let expr_1 = 2.0 * Expr::var("x") + 12.75;
         let expr_2 = (Expr::Const(12.0) - 3.0) * 3.0 * Expr::var("x");
         let expr_3 = (4.5 + Expr::var("x")).powf(2.0) / 2.5;
-        let mut scope = BTreeMap::default();
-        scope.insert(
-            "x".into(),
-            Var {
-                name: "x".into(),
-                inner: 4.5,
-            },
-        );
+        let mut scope = Scope::default();
+        scope.insert(Var {
+            name: "x".into(),
+            inner: 4.5,
+        });
 
         assert_eq!(expr_1.eval(&scope)?, 21.75);
         assert_eq!(expr_2.eval(&scope)?, 121.5);

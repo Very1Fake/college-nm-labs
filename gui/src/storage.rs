@@ -15,7 +15,7 @@ impl<T: Default> Storage<T> {
             self.content.shrink_to_fit(); // Clean up
 
             if let Some(i) = self.selected {
-                if let None = self.content.get(i) {
+                if self.content.get(i).is_none() {
                     self.selected = None;
                 }
             }

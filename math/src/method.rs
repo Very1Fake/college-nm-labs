@@ -70,13 +70,10 @@ impl MethodEquation {
         match self {
             MethodEquation::Math(expr) => {
                 let mut scope = Scope::default();
-                scope.insert(
-                    "x".into(),
-                    Var {
-                        name: "x".into(),
-                        inner: x,
-                    },
-                );
+                scope.insert(Var {
+                    name: "x".into(),
+                    inner: x,
+                });
 
                 expr.eval(&scope)
             }

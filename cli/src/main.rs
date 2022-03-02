@@ -1,8 +1,8 @@
 use core::f64::consts::E;
 
 use nm_math::{
-    expression::{Expr, MathConst},
     method::{Method, MethodEquation, MethodError},
+    parser::parse,
     variable::OpType,
 };
 
@@ -28,16 +28,16 @@ fn main() -> Result<(), MethodError> {
     println!("\n\n{:-^16}\n\n", "");
 
     // Virtual expressions
-    let func_expr = Expr::var("x") + Expr::MathConst(MathConst::E).pow(Expr::var("x"));
+    let func_expr = parse("x + e^x").unwrap();
 
     let result_expr = Method::new(100).very_verbose().bisection(
-        MethodEquation::Math(func_expr),
+        MethodEquation::Math(func_expr.clone()),
         (-1.0, 0.0),
         0.01,
     )?;
 
     println!(
-        "\nResult (Expr): x = {} f(x) = {}\nIterations: {}\nElapsed time: {:?}",
+        "\nResult ({func_expr}): x = {} f(x) = {}\nIterations: {}\nElapsed time: {:?}",
         result_expr.inner.0,
         result_expr.inner.1,
         result_expr.stats.iterations,

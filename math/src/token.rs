@@ -1,15 +1,17 @@
-use std::{iter::Peekable, str::Chars};
+use core::{iter::Peekable, num::NonZeroU8, str::Chars};
 
 use smallvec::SmallVec;
 
-use crate::variable::OpType;
+use crate::{ops::Op, variable::OpType};
 
 const INLINE: usize = 16;
 
 const NUMBER_SEPARATOR: char = '_';
 
-#[derive(PartialEq, Debug)]
-pub enum TokenError {
+pub type Precedence = NonZeroU8;
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum LexError {
     UnexpectedInput(String),
     MalformedNumber(String),
     MalformedIdentifier(String),
@@ -42,11 +44,76 @@ pub enum Token {
     /// `,`
     Comma,
     /// End Of File
-    EOF,
-    Error(TokenError),
+    Eof,
+    LexError(LexError),
+}
+
+impl Token {
+    pub fn precedence(&self) -> Option<Precedence> {
+        use Token::*;
+
+        Precedence::new(match self {
+            Minus => 10,
+            Plus => 20,
+            Multiply => 30,
+            Divide => 40,
+            PowerOf => 50,
+            _ => 0,
+        })
+    }
+
+    pub fn is_bind_right(&self) -> bool {
+        matches!(self, Token::PowerOf)
+    }
+
+    pub fn as_ops(&self) -> Option<Op> {
+        use Token::*;
+
+        match self {
+            Minus => Some(Op::Sub),
+            Plus => Some(Op::Add),
+            Multiply => Some(Op::Mul),
+            Divide => Some(Op::Div),
+            PowerOf => Some(Op::Pow),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        use Token::*;
+
+        match self {
+            NewLine => "\\n",
+            Number(_) => "Token::Number",
+            Identifier(_) => "`Token::Identifier`",
+            LeftParen => "(",
+            RightParen => ")",
+            Minus => "+",
+            Plus => "-",
+            Multiply => "*",
+            Divide => "/",
+            PowerOf => "^",
+            Semicolon => ";",
+            Comma => ",",
+            Eof => "EOF",
+            LexError(_) => "`Token::Error`",
+        }
+    }
+
+    pub fn syntax(&self) -> String {
+        use Token::*;
+
+        match self {
+            Number(n) => n.to_string(),
+            Identifier(s) => s.clone(),
+            t => t.as_str().to_string(),
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
+
+pub type TokenStream<'a> = Peekable<Tokenizer<'a>>;
 
 pub struct Tokenizer<'a> {
     stream: Peekable<Chars<'a>>,
@@ -65,18 +132,14 @@ impl<'a> Iterator for Tokenizer<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(char) = self.stream.next() {
-            println!("{char:?},{:?}", self.stream.peek().unwrap_or(&'\0'));
             match (char, &self.stream.peek().unwrap_or(&'\0')) {
                 ('\n', _) => return Some(Token::NewLine),
 
-                // TODO: Number
                 ('0'..='9', _) => {
                     let mut result = SmallVec::<[char; INLINE]>::new();
                     result.push(char);
 
                     while let Some(next_char) = self.stream.peek() {
-                        println!("{next_char}");
-                        // TODO: add e support
                         // TODO: add hexadecimal/binary format
                         match next_char {
                             next_char
@@ -97,14 +160,10 @@ impl<'a> Iterator for Tokenizer<'a> {
 
                         out.parse::<OpType>()
                             .map(Token::Number)
-                            .unwrap_or_else(|_| {
-                                eprintln!("{}{out}", result.iter().collect::<String>());
-                                Token::Error(TokenError::MalformedNumber(out))
-                            })
+                            .unwrap_or_else(|_| Token::LexError(LexError::MalformedNumber(out)))
                     });
                 }
 
-                // TODO: Identifier
                 (ch, _) if ch.is_ascii_lowercase() => {
                     let mut result = SmallVec::<[char; INLINE]>::new();
                     result.push(ch);
@@ -124,7 +183,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                     if identifier.len() <= 6 {
                         return Some(Token::Identifier(identifier));
                     } else {
-                        return Some(Token::Error(TokenError::MalformedIdentifier(identifier)));
+                        return Some(Token::LexError(LexError::MalformedIdentifier(identifier)));
                     }
                 }
 
@@ -144,11 +203,11 @@ impl<'a> Iterator for Tokenizer<'a> {
                 (',', _) => return Some(Token::Comma),
 
                 (ch, _) if ch.is_whitespace() => (),
-                (ch, _) => return Some(Token::Error(TokenError::UnexpectedInput(ch.to_string()))),
+                (ch, _) => return Some(Token::LexError(LexError::UnexpectedInput(ch.to_string()))),
             }
         }
 
-        Some(Token::EOF)
+        Some(Token::Eof)
     }
 }
 
@@ -161,7 +220,7 @@ fn skip(stream: &mut impl Iterator) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Token, TokenError, Tokenizer};
+    use super::{LexError, Token, Tokenizer};
 
     #[test]
     fn stream_simple() {
@@ -169,7 +228,7 @@ mod tests {
 
         assert_eq!(
             Tokenizer::new(&script)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![
                 Token::LeftParen,
@@ -195,28 +254,28 @@ mod tests {
 
         assert_eq!(
             Tokenizer::new(&integer)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(12345.0),]
         );
 
         assert_eq!(
             Tokenizer::new(&float)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(24.25),]
         );
 
         assert_eq!(
             Tokenizer::new(&big)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(1_000_000.0),]
         );
 
         assert_eq!(
             Tokenizer::new(&script)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![
                 Token::Number(1.0),
@@ -238,18 +297,18 @@ mod tests {
 
         assert_eq!(
             Tokenizer::new(&valid)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(2.0), Token::Identifier("x".to_string()),]
         );
 
         assert_eq!(
             Tokenizer::new(&invalid)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![
                 Token::Identifier("x".to_string()),
-                Token::Error(TokenError::UnexpectedInput("_".to_string())),
+                Token::LexError(LexError::UnexpectedInput("_".to_string())),
                 Token::Identifier("y".to_string()),
                 Token::PowerOf,
                 Token::Number(2.0)
@@ -258,7 +317,7 @@ mod tests {
 
         assert_eq!(
             Tokenizer::new(&script)
-                .take_while(|t| t != &Token::EOF)
+                .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![
                 Token::Identifier("x".to_string()),
