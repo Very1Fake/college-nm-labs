@@ -3,10 +3,11 @@ mod function;
 pub mod method;
 mod ops;
 pub mod parser;
-mod token;
+pub mod token;
 pub mod variable;
 
 pub const INLINED: usize = 8;
 
 // TODO: Add expression derivatives
 // TODO: Add equations
+// TODO: Make criterion benches

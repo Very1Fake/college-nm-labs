@@ -1,6 +1,9 @@
 use core::ops::{Add, Div, Mul, Sub};
 
-use crate::variable::OpType;
+use crate::{
+    expression::{EvaluationError, EvaluationResult},
+    variable::OpType,
+};
 
 // TODO: Add modulo
 #[derive(PartialOrd, PartialEq, Clone, Debug)]
@@ -25,16 +28,22 @@ impl Op {
         }
     }
 
-    pub fn calc(&self, lhs: OpType, rhs: OpType) -> OpType {
+    pub fn calc(&self, lhs: OpType, rhs: OpType) -> EvaluationResult<OpType> {
         use Op::*;
 
-        match self {
+        Ok(match self {
             Sub => lhs.sub(rhs),
             Add => lhs.add(rhs),
             Mul => lhs.mul(rhs),
-            Div => lhs.div(rhs),
+            Div => {
+                if rhs != 0.0 {
+                    lhs.div(rhs)
+                } else {
+                    return Err(EvaluationError::ZeroDivision);
+                }
+            }
             Pow => lhs.powf(rhs),
-        }
+        })
     }
 }
 

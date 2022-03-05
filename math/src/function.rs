@@ -4,24 +4,29 @@ use crate::variable::OpType;
 pub enum Func {
     Sin,
     Cos,
+    Tan,
 }
 
 impl Func {
     pub fn eval(&self, args: Vec<OpType>) -> OpType {
-        // TODO: Handle missing args
+        const MSG: &str = "Arg not found";
+
+        // TODO: Enhance handling
         match self {
-            Func::Sin => args[0].sin(),
-            Func::Cos => args[0].cos(),
+            Func::Sin => args.get(0).expect(MSG).sin(),
+            Func::Cos => args.get(0).expect(MSG).cos(),
+            Func::Tan => args.get(0).expect(MSG).tan(),
         }
     }
 
-    /// How much arguments function need
+    /// Hint for parser about how much arguments function need
     pub fn hint(&self) -> u8 {
         use Func::*;
 
         match self {
             Sin => 1,
             Cos => 1,
+            Tan => 1,
         }
     }
 
@@ -29,6 +34,7 @@ impl Func {
         match self {
             Func::Sin => "sin",
             Func::Cos => "cos",
+            Func::Tan => "tan",
         }
     }
 
@@ -36,6 +42,7 @@ impl Func {
         match s {
             "sin" => Some(Func::Sin),
             "cos" => Some(Func::Cos),
+            "tan" => Some(Func::Tan),
             _ => None,
         }
     }

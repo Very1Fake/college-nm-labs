@@ -1,3 +1,5 @@
+use thiserror::Error;
+
 use crate::expression::MathConst;
 use crate::ops::Op;
 use crate::{expression::Expr, function::Func};
@@ -10,19 +12,18 @@ const LEVEL_LIMIT: usize = 10;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum ParseError {
-    LevelLimitExceed,
-    LexError(LexError),
+    #[error("Nesting level limit exceeded")]
+    LevelLimitExceeded,
+    #[error("Lex error: {0}")]
+    LexError(#[from] LexError),
+    #[error("Unexpected End of File")]
     UnexpectedEOF,
+    #[error("Missing token '{0}' use {1}")]
     MissingToken(String, String),
+    #[error("Function '{0}' not found")]
     FunctionNotFound(String),
-}
-
-impl From<LexError> for ParseError {
-    fn from(err: LexError) -> Self {
-        Self::LexError(err)
-    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -43,7 +44,7 @@ impl ParserState {
     #[inline]
     fn ensure_level_max_limit(&self) -> ParseResult<()> {
         if self.level == LEVEL_LIMIT {
-            Err(ParseError::LevelLimitExceed)
+            Err(ParseError::LevelLimitExceeded)
         } else {
             Ok(())
         }
@@ -74,7 +75,7 @@ fn parse_fn_call(state: &ParserState, stream: &mut TokenStream, name: String) ->
     #[inline(always)]
     fn right_paren_missing(name: String) -> ParseResult<Expr> {
         Err(ParseError::MissingToken(
-            Token::RightParen.as_str().to_string(),
+            Token::RightParen.as_str().to_owned(),
             format!(
                 "to close the arguments list of this function call '{}'",
                 name
@@ -112,7 +113,7 @@ fn parse_fn_call(state: &ParserState, stream: &mut TokenStream, name: String) ->
             // name(... ???
             _ => {
                 return Err(ParseError::MissingToken(
-                    Token::Comma.as_str().to_string(),
+                    Token::Comma.as_str().to_owned(),
                     format!("to separate arguments to function call '{}'", name),
                 ))
             }
@@ -183,8 +184,8 @@ fn parse_paren_expr(state: &ParserState, stream: &mut TokenStream) -> ParseResul
         Token::RightParen => Ok(expr),
         Token::LexError(err) => Err(err.into()),
         _ => Err(ParseError::MissingToken(
-            Token::RightParen.as_str().to_string(),
-            "for matching ( in this expression".to_string(),
+            Token::RightParen.as_str().to_owned(),
+            String::from("for matching ( in this expression"),
         )),
     }
 }
@@ -318,17 +319,19 @@ fn skip_token(stream: &mut TokenStream, token: Token) {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
+
     use crate::{
-        expression::{Evaluable, EvaluationError, Expr, MathConst},
+        expression::{Evaluable, Expr, MathConst},
         function::Func,
         ops::Op,
         variable::{Scope, Var},
     };
 
-    use super::{parse, ParseResult};
+    use super::parse;
 
     #[test]
-    fn parse_number() -> ParseResult<()> {
+    fn parse_number() -> Result<()> {
         let input_1 = "2";
         let input_2 = "-2.45";
 
@@ -339,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_ops() -> ParseResult<()> {
+    fn parse_ops() -> Result<()> {
         let input_1 = "2 + 2";
         let input_2 = "4 + 5^2";
         let input_3 = "(2 + 2) * 5";
@@ -354,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_var_const() -> ParseResult<()> {
+    fn parse_var_const() -> Result<()> {
         let input_1 = "2y";
         let input_2 = "x^e";
         let input_3 = "2e";
@@ -370,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_func() -> ParseResult<()> {
+    fn parse_func() -> Result<()> {
         let input_1 = "cos(2)";
         let input_2 = "2sin(x)";
 
@@ -393,22 +396,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_full() -> Result<(), EvaluationError> {
+    fn parse_full() -> Result<()> {
         let script = "2x^3+2";
 
         let mut scope = Scope::default();
-        scope.insert(Var {
-            name: "x".into(),
-            inner: 4.0,
-        });
+        scope.insert(Var::new("x", 4.0));
 
         let expected = (2.0 * Expr::var("x")).powf(3.0) + 2.0; // Answer: 514
-        let parsed = parse(script).unwrap();
 
-        assert_eq!(
-            parsed.eval(&scope).expect("Unreachable"),
-            expected.eval(&scope).expect("Unreachable")
-        );
+        assert_eq!(parse(script)?.eval(&scope)?, expected.eval(&scope)?);
 
         Ok(())
     }

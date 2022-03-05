@@ -4,6 +4,8 @@ use core::{
 };
 use std::time::Instant;
 
+use thiserror::Error;
+
 use crate::{
     expression::{Evaluable, EvaluationError, Expr},
     variable::{OpType, Scope, Var},
@@ -11,10 +13,13 @@ use crate::{
 
 const MAX_ITERS_DEFAULT: u128 = 1_000_000;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum MethodError {
-    IterationsExceed(u128),
-    EvaluationError(EvaluationError),
+    #[error("Iterations limit exceeded")]
+    IterationsExceeded(u128),
+    #[error("Evaluation error while execution method: {0}")]
+    EvaluationError(#[from] EvaluationError),
+    #[error("{0}")]
     Other(String),
 }
 
@@ -70,10 +75,7 @@ impl MethodEquation {
         match self {
             MethodEquation::Math(expr) => {
                 let mut scope = Scope::default();
-                scope.insert(Var {
-                    name: "x".into(),
-                    inner: x,
-                });
+                scope.insert(Var::new("x", x));
 
                 expr.eval(&scope)
             }
@@ -105,14 +107,8 @@ impl Method {
     }
 
     #[inline]
-    pub fn verbose(mut self) -> Self {
-        self.verbose = 1;
-        self
-    }
-
-    #[inline]
-    pub fn very_verbose(mut self) -> Self {
-        self.verbose = 2;
+    pub fn verbose(mut self, verbose: u8) -> Self {
+        self.verbose = verbose;
         self
     }
 
@@ -123,11 +119,11 @@ impl Method {
     pub fn bisection(
         mut self,
         f: MethodEquation,
-        range: (OpType, OpType),
-        epsilon: OpType,
+        interval: (OpType, OpType),
+        precision: OpType,
     ) -> Result<MethodResult, MethodError> {
-        let mut a = range.0;
-        let mut b = range.1;
+        let mut a = interval.0;
+        let mut b = interval.1;
 
         if sign_diff(
             f.eval(a).map_err(MethodError::EvaluationError)?,
@@ -152,7 +148,7 @@ impl Method {
                 // Print iterations precision check
                 if self.verbose == 2 {
                     println!(
-                        "Iter({}): Precision check |{}| < {epsilon}",
+                        "Iter({}): Precision check |{}| < {precision}",
                         self.iterations,
                         f.eval(b).map_err(MethodError::EvaluationError)?
                             - f.eval(a).map_err(MethodError::EvaluationError)?
@@ -173,7 +169,7 @@ impl Method {
                 if (f.eval(b).map_err(MethodError::EvaluationError)?
                     - f.eval(a).map_err(MethodError::EvaluationError)?)
                 .abs()
-                    < epsilon
+                    < precision
                 {
                     let result = (b + a) / 2.0;
                     return Ok(MethodResult {
@@ -189,10 +185,10 @@ impl Method {
                 }
             }
 
-            Err(MethodError::IterationsExceed(self.iterations))
+            Err(MethodError::IterationsExceeded(self.iterations))
         } else {
             Err(MethodError::Other(format!(
-                "Equation has no roots in range {range:?}"
+                "Equation has no roots on this interval {interval:?}"
             )))
         }
     }

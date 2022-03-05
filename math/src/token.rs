@@ -1,6 +1,7 @@
 use core::{iter::Peekable, num::NonZeroU8, str::Chars};
 
 use smallvec::SmallVec;
+use thiserror::Error;
 
 use crate::{ops::Op, variable::OpType};
 
@@ -10,10 +11,13 @@ const NUMBER_SEPARATOR: char = '_';
 
 pub type Precedence = NonZeroU8;
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone, Error, Debug)]
 pub enum LexError {
+    #[error("Unexpected input '{0}' received")]
     UnexpectedInput(String),
+    #[error("Malformed number literal '{0}'")]
     MalformedNumber(String),
+    #[error("Malformed identifier '{0}'")]
     MalformedIdentifier(String),
 }
 
@@ -106,16 +110,16 @@ impl Token {
         match self {
             Number(n) => n.to_string(),
             Identifier(s) => s.clone(),
-            t => t.as_str().to_string(),
+            t => t.as_str().to_owned(),
         }
     }
 }
 
 // -------------------------------------------------------------------------------------------------
 
-pub type TokenStream<'a> = Peekable<Tokenizer<'a>>;
+pub(crate) type TokenStream<'a> = Peekable<Tokenizer<'a>>;
 
-pub struct Tokenizer<'a> {
+pub(crate) struct Tokenizer<'a> {
     stream: Peekable<Chars<'a>>,
 }
 
@@ -299,7 +303,7 @@ mod tests {
             Tokenizer::new(&valid)
                 .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
-            vec![Token::Number(2.0), Token::Identifier("x".to_string()),]
+            vec![Token::Number(2.0), Token::Identifier(String::from("x")),]
         );
 
         assert_eq!(
@@ -307,9 +311,9 @@ mod tests {
                 .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![
-                Token::Identifier("x".to_string()),
-                Token::LexError(LexError::UnexpectedInput("_".to_string())),
-                Token::Identifier("y".to_string()),
+                Token::Identifier(String::from("x")),
+                Token::LexError(LexError::UnexpectedInput(String::from("_"))),
+                Token::Identifier(String::from("y")),
                 Token::PowerOf,
                 Token::Number(2.0)
             ]
@@ -320,13 +324,13 @@ mod tests {
                 .take_while(|t| t != &Token::Eof)
                 .collect::<Vec<Token>>(),
             vec![
-                Token::Identifier("x".to_string()),
+                Token::Identifier(String::from("x")),
                 Token::Multiply,
                 Token::Number(2.0),
-                Token::Identifier("y".to_string()),
+                Token::Identifier(String::from("y")),
                 Token::Plus,
                 Token::Number(3.0),
-                Token::Identifier("abc".to_string()),
+                Token::Identifier(String::from("abc")),
                 Token::PowerOf,
                 Token::Number(4.0)
             ]

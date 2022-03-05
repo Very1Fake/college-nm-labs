@@ -26,5 +26,14 @@ impl Scope {
 #[derive(Debug)]
 pub struct Var {
     pub name: VarName,
-    pub inner: OpType,
+    pub value: OpType,
+}
+
+impl Var {
+    pub fn new(name: impl Into<VarName>, value: OpType) -> Self {
+        Self {
+            name: name.into(),
+            value,
+        }
+    }
 }

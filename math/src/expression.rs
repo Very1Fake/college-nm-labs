@@ -1,8 +1,10 @@
 use core::{
-    f64::consts::E,
+    f64::consts::{E, PI},
     fmt,
     ops::{Add, Div, Mul, Neg, Sub},
 };
+
+use thiserror::Error;
 
 use crate::{function::Func, token::Token};
 
@@ -11,14 +13,18 @@ use super::{
     variable::{OpType, Scope, VarName},
 };
 
-#[derive(Debug)]
+pub type EvaluationResult<T> = Result<T, EvaluationError>;
+
+#[derive(Error, Debug)]
 pub enum EvaluationError {
+    #[error("Variable '{0}' not found")]
     VariableNotFound(VarName),
+    #[error("Division by zero")]
     ZeroDivision,
 }
 
 pub trait Evaluable {
-    fn eval(&self, scope: &Scope) -> Result<OpType, EvaluationError>;
+    fn eval(&self, scope: &Scope) -> EvaluationResult<OpType>;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -26,25 +32,29 @@ pub trait Evaluable {
 #[derive(PartialEq, Clone, Debug)]
 pub enum MathConst {
     E,
+    Pi,
 }
 
 impl MathConst {
     /// Get math constant value
     pub fn value(&self) -> OpType {
         match self {
-            MathConst::E => E,
+            Self::E => E,
+            Self::Pi => PI,
         }
     }
 
     pub fn as_str(&self) -> &str {
         match self {
-            MathConst::E => "e",
+            Self::E => "e",
+            Self::Pi => "π",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "e" => Some(Self::E),
+            "pi" | "π" => Some(Self::Pi),
             _ => None,
         }
     }
@@ -84,21 +94,21 @@ impl Expr {
 }
 
 impl Evaluable for Expr {
-    fn eval(&self, scope: &Scope) -> Result<OpType, EvaluationError> {
+    fn eval(&self, scope: &Scope) -> EvaluationResult<OpType> {
         use Expr::*;
 
         match self {
             Const(value) => Ok(*value),
             MathConst(constant) => Ok(constant.value()),
             Var(name) => match scope.get(name) {
-                Some(var) => Ok(var.inner),
+                Some(var) => Ok(var.value),
                 None => Err(EvaluationError::VariableNotFound(name.clone())),
             },
-            Op(op, ops) => Ok(op.calc(ops.0.eval(scope)?, ops.1.eval(scope)?)),
+            Op(op, ops) => Ok(op.calc(ops.0.eval(scope)?, ops.1.eval(scope)?)?),
             Func(func, args) => Ok(func.eval(
                 args.iter()
                     .map(|expr| expr.eval(scope))
-                    .collect::<Result<Vec<OpType>, EvaluationError>>()?,
+                    .collect::<EvaluationResult<Vec<OpType>>>()?,
             )),
             Brackets(expr) => expr.eval(scope),
         }
@@ -119,14 +129,13 @@ impl fmt::Display for Expr {
             Self::Var(name) => f.write_str(name),
             Self::Op(op, ops) => match op {
                 Op::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
-                Op::Mul => {
-                    if let Expr::Var(_) = ops.1 {
+                Op::Mul => match **ops {
+                    (Expr::Const(_), Expr::Var(_) | Expr::Func(..)) => {
                         ops.0.fmt(f)?;
                         ops.1.fmt(f)
-                    } else {
-                        write!(f, "{} {} {}", ops.0, op.as_str(), ops.1)
                     }
-                }
+                    _ => write!(f, "{} {} {}", ops.0, op.as_str(), ops.1),
+                },
                 _ => write!(f, "{} {} {}", ops.0, op.as_str(), ops.1),
             },
             Self::Func(func, args) => {
@@ -332,12 +341,14 @@ impl Expr {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
+
     use crate::{
         expression::{Evaluable, MathConst},
         variable::{Scope, Var},
     };
 
-    use super::{EvaluationError, Expr};
+    use super::Expr;
 
     // Formats
 
@@ -346,19 +357,21 @@ mod tests {
         let constant = Expr::Const(2.5);
         let math_const = Expr::MathConst(MathConst::E);
 
-        assert_eq!(format!("{constant}"), "2.5".to_string());
-        assert_eq!(format!("{math_const}"), "e".to_string());
+        assert_eq!(format!("{constant}"), "2.5");
+        assert_eq!(format!("{math_const}"), "e");
     }
 
     #[test]
     fn fmt_var() {
         let var = Expr::var("x");
+        let var_var = Expr::var("y") * Expr::var("x");
         let var_coef = 4.75 * Expr::var("y");
         let var_no_coef = 12.5 + Expr::var("z");
 
-        assert_eq!(format!("{var}"), "x".to_string());
-        assert_eq!(format!("{var_coef}"), "4.75y".to_string());
-        assert_eq!(format!("{var_no_coef}"), "12.5 + z".to_string());
+        assert_eq!(format!("{var}"), "x");
+        assert_eq!(format!("{var_var}"), "y * x");
+        assert_eq!(format!("{var_coef}"), "4.75y");
+        assert_eq!(format!("{var_no_coef}"), "12.5 + z");
     }
 
     #[test]
@@ -367,9 +380,18 @@ mod tests {
         let exp_var = Expr::var("z").powf(4.0);
         let exp_e = Expr::MathConst(MathConst::E).pow(Expr::var("x"));
 
-        assert_eq!(format!("{exp_const}"), "25^2".to_string());
-        assert_eq!(format!("{exp_var}"), "z^4".to_string());
-        assert_eq!(format!("{exp_e}"), "e^x".to_string());
+        assert_eq!(format!("{exp_const}"), "25^2");
+        assert_eq!(format!("{exp_var}"), "z^4");
+        assert_eq!(format!("{exp_e}"), "e^x");
+    }
+
+    #[test]
+    fn fmt_func() {
+        let func = Expr::Const(1.0).sin();
+        let func_coef = 2.0 * Expr::Const(0.5).cos();
+
+        assert_eq!(format!("{func}"), "sin(1)");
+        assert_eq!(format!("{func_coef}"), "2cos(0.5)");
     }
 
     #[test]
@@ -386,7 +408,7 @@ mod tests {
     // Evaluations
 
     #[test]
-    fn eval_const() -> Result<(), EvaluationError> {
+    fn eval_const() -> Result<()> {
         let c = Expr::Const(2.0);
 
         assert_eq!(c.eval(&Scope::default())?, 2.0);
@@ -395,15 +417,12 @@ mod tests {
     }
 
     #[test]
-    fn eval_var() -> Result<(), EvaluationError> {
+    fn eval_var() -> Result<()> {
         let var = Expr::var("x");
         let var_coef = 3.2 * Expr::var("x");
 
         let mut scope = Scope::default();
-        scope.insert(Var {
-            name: "x".into(),
-            inner: 5.0,
-        });
+        scope.insert(Var::new("x", 5.0));
 
         assert_eq!(var.eval(&scope)?, 5.0);
         assert_eq!(var_coef.eval(&scope)?, 16.0);
@@ -412,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn eval_exp() -> Result<(), EvaluationError> {
+    fn eval_exp() -> Result<()> {
         let exp = Expr::Const(2.0).powf(10.0);
 
         assert_eq!(exp.eval(&Scope::default())?, 1024.0);
@@ -421,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn eval_func() -> Result<(), EvaluationError> {
+    fn eval_func() -> Result<()> {
         let func_sin = Expr::Const(4.0).sin();
         let func_cos = Expr::Const(5.0).cos();
 
@@ -432,15 +451,12 @@ mod tests {
     }
 
     #[test]
-    fn eval_expr() -> Result<(), EvaluationError> {
+    fn eval_expr() -> Result<()> {
         let expr_1 = 2.0 * Expr::var("x") + 12.75;
         let expr_2 = (Expr::Const(12.0) - 3.0) * 3.0 * Expr::var("x");
         let expr_3 = (4.5 + Expr::var("x")).powf(2.0) / 2.5;
         let mut scope = Scope::default();
-        scope.insert(Var {
-            name: "x".into(),
-            inner: 4.5,
-        });
+        scope.insert(Var::new("x", 4.5));
 
         assert_eq!(expr_1.eval(&scope)?, 21.75);
         assert_eq!(expr_2.eval(&scope)?, 121.5);
