@@ -3,7 +3,7 @@ use std::collections::BTreeMap; // TODO: Try more performant maps
 use smartstring::{LazyCompact, SmartString};
 
 /// Operand Type
-pub type OpType = f64; // Only floats are available
+pub type OpType = f64; // Only floats are available  // TODO: Stabilize
 pub type VarName = SmartString<LazyCompact>; // TODO: Char only but with indices (e.g. x1/y2)
 
 #[derive(Default)]

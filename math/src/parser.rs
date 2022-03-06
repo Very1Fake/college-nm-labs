@@ -8,7 +8,7 @@ use crate::token::{LexError, Precedence, Token, TokenStream, Tokenizer};
 
 const NEVER_ENDS: &str = "`TokenStream` never ends";
 
-const LEVEL_LIMIT: usize = 10;
+const LEVEL_LIMIT: usize = 500;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -24,6 +24,8 @@ pub enum ParseError {
     MissingToken(String, String),
     #[error("Function '{0}' not found")]
     FunctionNotFound(String),
+    #[error("Function '{0}' requires {1} argument(s)")]
+    NotEnoughArguments(String, u8),
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -55,7 +57,6 @@ impl ParserState {
 fn parse_fn_call(state: &ParserState, stream: &mut TokenStream, name: String) -> ParseResult<Expr> {
     state.ensure_level_max_limit()?;
 
-    // TODO: Arguments count checks
     let mut args = Vec::with_capacity(1);
     let peek = stream.peek().expect(NEVER_ENDS);
 
@@ -65,7 +66,11 @@ fn parse_fn_call(state: &ParserState, stream: &mut TokenStream, name: String) ->
         skip_token(stream, Token::RightParen);
 
         if let Some(func) = Func::parse(&name) {
-            Ok(Expr::Func(func, args))
+            if args.len() == func.hint() as usize {
+                Ok(Expr::Func(func, args))
+            } else {
+                Err(ParseError::NotEnoughArguments(name, func.hint()))
+            }
         } else {
             Err(ParseError::FunctionNotFound(name))
         }
@@ -376,11 +381,13 @@ mod tests {
     fn parse_func() -> Result<()> {
         let input_1 = "cos(2)";
         let input_2 = "2sin(x)";
+        let input_3 = "tan(-2x)"; // FIX
 
         assert_eq!(
             parse(input_1)?,
             Expr::Func(Func::Cos, vec![Expr::Const(2.0)])
         );
+
         assert_eq!(
             parse(input_2)?,
             Expr::Op(
@@ -389,6 +396,17 @@ mod tests {
                     Expr::Const(2.0),
                     Expr::Func(Func::Sin, vec![Expr::var("x")])
                 ))
+            )
+        );
+
+        assert_eq!(
+            parse(input_3)?,
+            Expr::Func(
+                Func::Tan,
+                vec![Expr::Op(
+                    Op::Mul,
+                    Box::new((Expr::Const(-2.0), Expr::var("-x")))
+                )]
             )
         );
 

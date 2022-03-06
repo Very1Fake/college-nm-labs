@@ -226,6 +226,11 @@ fn skip(stream: &mut impl Iterator) {
 mod tests {
     use super::{LexError, Token, Tokenizer};
 
+    #[inline]
+    fn until(t: &Token) -> bool {
+        t != &Token::Eof
+    }
+
     #[test]
     fn stream_simple() {
         let script = "( -+*/^ ) \n ;,";
@@ -258,28 +263,28 @@ mod tests {
 
         assert_eq!(
             Tokenizer::new(&integer)
-                .take_while(|t| t != &Token::Eof)
+                .take_while(until)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(12345.0),]
         );
 
         assert_eq!(
             Tokenizer::new(&float)
-                .take_while(|t| t != &Token::Eof)
+                .take_while(until)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(24.25),]
         );
 
         assert_eq!(
             Tokenizer::new(&big)
-                .take_while(|t| t != &Token::Eof)
+                .take_while(until)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(1_000_000.0),]
         );
 
         assert_eq!(
             Tokenizer::new(&script)
-                .take_while(|t| t != &Token::Eof)
+                .take_while(until)
                 .collect::<Vec<Token>>(),
             vec![
                 Token::Number(1.0),
@@ -301,14 +306,14 @@ mod tests {
 
         assert_eq!(
             Tokenizer::new(&valid)
-                .take_while(|t| t != &Token::Eof)
+                .take_while(until)
                 .collect::<Vec<Token>>(),
             vec![Token::Number(2.0), Token::Identifier(String::from("x")),]
         );
 
         assert_eq!(
             Tokenizer::new(&invalid)
-                .take_while(|t| t != &Token::Eof)
+                .take_while(until)
                 .collect::<Vec<Token>>(),
             vec![
                 Token::Identifier(String::from("x")),
@@ -321,7 +326,7 @@ mod tests {
 
         assert_eq!(
             Tokenizer::new(&script)
-                .take_while(|t| t != &Token::Eof)
+                .take_while(until)
                 .collect::<Vec<Token>>(),
             vec![
                 Token::Identifier(String::from("x")),
@@ -333,6 +338,39 @@ mod tests {
                 Token::Identifier(String::from("abc")),
                 Token::PowerOf,
                 Token::Number(4.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn stream_func() {
+        let cos = "3cos(1)";
+        let sin = "sin(-2x)";
+
+        assert_eq!(
+            Tokenizer::new(&cos)
+                .take_while(until)
+                .collect::<Vec<Token>>(),
+            vec![
+                Token::Number(3.0),
+                Token::Identifier(String::from("cos")),
+                Token::LeftParen,
+                Token::Number(1.0),
+                Token::RightParen,
+            ]
+        );
+
+        assert_eq!(
+            Tokenizer::new(&sin)
+                .take_while(until)
+                .collect::<Vec<Token>>(),
+            vec![
+                Token::Identifier(String::from("sin")),
+                Token::LeftParen,
+                Token::Minus,
+                Token::Number(2.0),
+                Token::Identifier(String::from("x")),
+                Token::RightParen,
             ]
         );
     }

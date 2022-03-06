@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Arg, Command, PossibleValue};
 
 use nm_math::{
-    method::{Method, MethodEquation},
+    method::{Method, MethodEquation, OutPut},
     parser::parse,
     token::LexError,
     variable::OpType,
@@ -103,18 +103,17 @@ fn main() -> Result<()> {
 
                     println!("Precision: {precision}\nInterval: {interval:?}\nIterations limit: {limit}\n");
 
-                    let result = Method::new(limit).verbose(verbose).bisection(
-                        MethodEquation::Math(expression.clone()),
-                        (interval[0], interval[1]),
-                        precision,
-                    )?;
+                    let result = Method::new(limit, OutPut::Stdout)
+                        .verbose(verbose)
+                        .bisection(
+                            MethodEquation::Math(expression.clone()),
+                            (interval[0], interval[1]),
+                            precision,
+                        )?;
 
                     println!(
-                        "Result: x = {}; f(x) = {};\nIterations: {}\nElapsed time: {:?}",
-                        result.inner.0,
-                        result.inner.1,
-                        result.stats.iterations,
-                        result.stats.elapsed
+                        "Result: x = {} (f(x) = {})\nIterations: {}\nElapsed time: {:?}",
+                        result.root.0, result.root.1, result.stats.iterations, result.stats.elapsed
                     );
                 }
                 _ => panic!("Unknown operation: '{op}'"),

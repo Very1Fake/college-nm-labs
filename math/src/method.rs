@@ -1,8 +1,8 @@
-use core::{
+use std::{
     fmt::{self, Display},
     time::Duration,
+    time::Instant,
 };
-use std::time::Instant;
 
 use thiserror::Error;
 
@@ -12,6 +12,8 @@ use crate::{
 };
 
 const MAX_ITERS_DEFAULT: u128 = 1_000_000;
+
+pub type Interval = (OpType, OpType);
 
 #[derive(Error, Debug)]
 pub enum MethodError {
@@ -31,8 +33,26 @@ pub struct CallStats {
 
 #[derive(Debug)]
 pub struct MethodResult {
-    pub inner: (OpType, OpType),
+    pub root: (OpType, OpType),
     pub stats: CallStats,
+}
+
+// -------------------------------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub enum OutPut<'a> {
+    Stdout,
+    Vec(&'a mut Vec<String>),
+}
+
+impl<'a> OutPut<'a> {
+    #[inline]
+    fn print(&mut self, text: String) {
+        match self {
+            OutPut::Stdout => println!("{text}"),
+            OutPut::Vec(vec) => vec.push(text),
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -87,20 +107,22 @@ impl MethodEquation {
 // -------------------------------------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct Method {
+pub struct Method<'a> {
     start: Instant,
     iterations: u128,
+    out: OutPut<'a>,
     verbose: u8,
 
     // Limits
     max_iters: u128,
 }
 
-impl Method {
-    pub fn new(max_iters: u128) -> Self {
+impl<'a> Method<'a> {
+    pub fn new(max_iters: u128, out: OutPut<'a>) -> Self {
         Method {
             start: Instant::now(),
             iterations: 0,
+            out,
             verbose: 0,
             max_iters,
         }
@@ -119,11 +141,10 @@ impl Method {
     pub fn bisection(
         mut self,
         f: MethodEquation,
-        interval: (OpType, OpType),
+        interval: Interval,
         precision: OpType,
     ) -> Result<MethodResult, MethodError> {
-        let mut a = interval.0;
-        let mut b = interval.1;
+        let (mut a, mut b) = interval;
 
         if sign_diff(
             f.eval(a).map_err(MethodError::EvaluationError)?,
@@ -136,23 +157,23 @@ impl Method {
 
                 // Print iterations result
                 if self.verbose >= 1 {
-                    println!(
+                    self.out.print(format!(
                         "Iter({}): [{a}; {b}], xi = {xi} ([{}; {}] {})",
                         self.iterations,
                         f.eval(a).map_err(MethodError::EvaluationError)?,
                         f.eval(b).map_err(MethodError::EvaluationError)?,
                         f.eval(xi).map_err(MethodError::EvaluationError)?
-                    );
+                    ));
                 }
 
                 // Print iterations precision check
                 if self.verbose == 2 {
-                    println!(
+                    self.out.print(format!(
                         "Iter({}): Precision check |{}| < {precision}",
                         self.iterations,
                         f.eval(b).map_err(MethodError::EvaluationError)?
                             - f.eval(a).map_err(MethodError::EvaluationError)?
-                    );
+                    ));
                 }
 
                 // Compare signs to clip the range
@@ -173,7 +194,7 @@ impl Method {
                 {
                     let result = (b + a) / 2.0;
                     return Ok(MethodResult {
-                        inner: (
+                        root: (
                             result,
                             f.eval(result).map_err(MethodError::EvaluationError)?,
                         ),
@@ -194,9 +215,9 @@ impl Method {
     }
 }
 
-impl Default for Method {
+impl Default for Method<'_> {
     fn default() -> Self {
-        Self::new(MAX_ITERS_DEFAULT)
+        Self::new(MAX_ITERS_DEFAULT, OutPut::Stdout)
     }
 }
 

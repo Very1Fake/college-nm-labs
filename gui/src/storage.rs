@@ -5,8 +5,8 @@ pub struct Storage<T: Default> {
 }
 
 impl<T: Default> Storage<T> {
-    pub fn get_selected(&self) -> Option<&T> {
-        self.selected.map(|i| &self.content[i])
+    pub fn get_selected(&self) -> Option<(usize, &T)> {
+        self.selected.map(|i| (i, &self.content[i]))
     }
 
     pub fn remove(&mut self, id: usize) {
@@ -20,6 +20,11 @@ impl<T: Default> Storage<T> {
                 }
             }
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.content = Vec::new();
+        self.selected = None;
     }
 }
 

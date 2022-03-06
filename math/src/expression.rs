@@ -162,7 +162,7 @@ impl Add for Expr {
     fn add(self, rhs: Self) -> Self::Output {
         Self::Op(
             Op::Add,
-            Box::new((self.brace_if(&Op::Add), rhs.brace_if(&Op::Sub))),
+            Box::new((self.brace_if(&Op::Add), rhs.brace_if(&Op::Add))),
         )
     }
 }
@@ -207,7 +207,7 @@ impl Neg for Expr {
         // TODO: Optimize further
         match self {
             Expr::Const(num) => Expr::Const(-num),
-            _ => self,
+            _ => self * -1.0,
         }
     }
 }

@@ -3,37 +3,90 @@ use core::{f64::consts::E, ops::RangeInclusive};
 use eframe::{
     egui::{
         global_dark_light_mode_switch,
-        plot::{Corner, Legend, Line, Plot, Text, Value, Values},
-        CentralPanel, Context, DragValue, Label, RichText, ScrollArea, SidePanel, TextStyle,
-        TopBottomPanel, Window,
+        plot::{Corner, Legend, Line, LineStyle, Plot, PlotUi, Points, VLine, Value, Values},
+        CentralPanel, ComboBox, Context, DragValue, Label, RichText, ScrollArea, SidePanel,
+        TextEdit, TextStyle, TopBottomPanel, Window,
     },
-    emath::Align2,
     epaint::{Color32, Vec2},
     epi::{App as EApp, Frame},
 };
 
 use nm_math::{
     expression::{Expr, MathConst},
-    method::MethodEquation,
+    method::{CallStats, Interval, Method, MethodEquation, OutPut},
+    parser::parse,
     variable::OpType,
 };
 
 use crate::storage::Storage;
 
+const METHOD_INTERVAL_LIMIT_RANGE: RangeInclusive<OpType> = OpType::NEG_INFINITY..=OpType::INFINITY;
+const METHOD_PRECISION_RANGE: RangeInclusive<i32> = 0..=24;
+const METHOD_ITER_LIMIT_RANGE: RangeInclusive<usize> = 1..=usize::MAX;
 const GRAPH_PRECISION_RANGE: RangeInclusive<usize> = 10..=10000;
+
+#[derive(PartialEq, Clone)]
+pub enum MethodKind {
+    Simple,
+    Bisection,
+}
+
+impl MethodKind {
+    const ALL: [Self; 2] = [Self::Simple, Self::Bisection];
+
+    pub fn as_str(&self) -> &str {
+        use MethodKind::*;
+
+        match self {
+            Simple => "Simple",
+            Bisection => "Bisection",
+        }
+    }
+}
+
+impl Default for MethodKind {
+    fn default() -> Self {
+        Self::Simple
+    }
+}
+
+pub enum MethodResult {
+    // Simple function. Stores: equation, interval
+    Simple(MethodEquation, Interval),
+    // Bisection method. Stores: equation, interval, root point
+    Bisection(MethodEquation, Interval, (OpType, OpType)),
+}
+
+// -------------------------------------------------------------------------------------------------
 
 pub struct App {
     eq_storage: Storage<MethodEquation>,
+    method_result: Option<MethodResult>,
 
     // UI
     full_width: bool,
-    storage_viewer: bool,
-    graph_viewer: bool,
+
+    // Equations
+    eq_viewer: bool,
+    eq_input: String,
+    eq_input_error: Option<String>,
 
     // Graph Viewer
+    graph_viewer: bool,
     precision: usize,
     square_view: bool,
     proportional: bool,
+
+    // Method Run
+    m_viewer: bool,
+    m_kind: MethodKind,
+    m_interval: Interval,
+    m_precision: i32,
+    m_limit: usize,
+    m_log: Vec<String>,
+    m_verbose: bool,
+    m_stats: Option<CallStats>,
+    m_error: Option<String>,
 }
 
 impl Default for App {
@@ -47,12 +100,24 @@ impl Default for App {
                 test(),
             ]
             .into(),
+            method_result: None,
             full_width: false,
-            storage_viewer: false,
+            eq_viewer: false,
             graph_viewer: false,
+            m_viewer: false,
+            eq_input: String::new(),
+            eq_input_error: None,
             precision: 500,
             square_view: false,
             proportional: false,
+            m_kind: Default::default(),
+            m_interval: (-1.0, 1.0),
+            m_precision: 3,
+            m_limit: 1000,
+            m_log: Vec::new(),
+            m_verbose: false,
+            m_stats: None,
+            m_error: None,
         }
     }
 }
@@ -75,39 +140,55 @@ impl EApp for App {
                     self.full_width = !self.full_width;
                 }
                 ui.separator();
-                if ui
-                    .selectable_label(self.storage_viewer, "Equations Storage")
-                    .clicked()
-                {
-                    self.storage_viewer = !self.storage_viewer;
+                if ui.selectable_label(self.eq_viewer, "Equations").clicked() {
+                    self.eq_viewer = !self.eq_viewer;
                 };
-                if ui
-                    .selectable_label(self.graph_viewer, "Graph Viewer")
-                    .clicked()
-                {
+                if ui.selectable_label(self.m_viewer, "Method").clicked() {
+                    self.m_viewer = !self.m_viewer;
+                };
+                if ui.selectable_label(self.graph_viewer, "Graph").clicked() {
                     self.graph_viewer = !self.graph_viewer;
                 };
             })
         });
 
-        Window::new("Equations Storage")
-            .open(&mut self.storage_viewer)
+        Window::new("Equations")
+            .open(&mut self.eq_viewer)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Add").clicked() {
-                        self.eq_storage.content.push(MethodEquation::Math(
-                            Expr::var("x") + Expr::MathConst(MathConst::E).pow(Expr::var("x")),
-                        ));
+                    if ui.button(RichText::new("Reset").size(20.0)).clicked() {
+                        self.eq_storage.clear();
                     }
+                    ui.collapsing(RichText::new("Add new ").size(20.0), |col| {
+                        if let Some(err) = &self.eq_input_error {
+                            col.label(RichText::new(err).size(16.0).color(Color32::RED));
+                        }
+                        col.add(
+                            TextEdit::singleline(&mut self.eq_input)
+                                .font(TextStyle::Heading)
+                                .hint_text("example: 'x^2'"),
+                        );
+                        if col.button("Add").clicked() {
+                            self.eq_input_error = None;
+                            match parse(&self.eq_input) {
+                                Ok(expr) => {
+                                    self.eq_storage.content.push(MethodEquation::Math(expr));
+                                    self.eq_input.clear();
+                                    self.eq_input.shrink_to_fit();
+                                }
+                                Err(err) => self.eq_input_error = Some(err.to_string()),
+                            }
+                        }
+                    });
                 });
-                let row_height = ui.spacing().interact_size.y;
+                ui.separator();
                 ScrollArea::both()
                     .max_height(256.0)
                     .max_width(512.0)
                     .auto_shrink([false; 2])
                     .show_rows(
                         ui,
-                        row_height,
+                        ui.spacing().interact_size.y,
                         self.eq_storage.content.len(),
                         |scroll, range| {
                             for i in range {
@@ -124,26 +205,198 @@ impl EApp for App {
                                 };
 
                                 scroll.horizontal(|wrap| {
-                                    if wrap
-                                        .radio(
-                                            is_selected,
-                                            RichText::new(format!(
-                                                "{}",
-                                                self.eq_storage.content[i]
-                                            ))
-                                            .size(32.0),
-                                        )
-                                        .clicked()
-                                    {
+                                    let eq_label = wrap.radio(
+                                        is_selected,
+                                        RichText::new(format!("{}", self.eq_storage.content[i]))
+                                            .size(28.0),
+                                    );
+                                    if eq_label.clicked() {
                                         self.eq_storage.selected = Some(i);
                                     }
-                                    if wrap.button("🗑").clicked() {
+                                    if eq_label.middle_clicked() {
                                         self.eq_storage.remove(i);
                                     }
                                 });
                             }
                         },
                     )
+            });
+
+        Window::new("Method")
+            .open(&mut self.m_viewer)
+            .show(ctx, |ui| {
+                let equation = self.eq_storage.get_selected();
+
+                if let Some((id, eq)) = equation {
+                    let eq = eq.clone();
+                    ui.horizontal(|hor| {
+                        hor.vertical(|vert| {
+                            vert.label(format!("Selected equation #{id}"));
+
+                            ScrollArea::horizontal()
+                                .max_width(256.0)
+                                .show(vert, |scroll| {
+                                    scroll.add(
+                                        Label::new(
+                                            RichText::new(format!("{}", eq))
+                                                .text_style(TextStyle::Monospace)
+                                                .size(20.0),
+                                        )
+                                        .wrap(false),
+                                    )
+                                });
+
+                            ComboBox::from_label("Choose method")
+                                .selected_text(self.m_kind.as_str())
+                                .show_ui(vert, |combo| {
+                                    MethodKind::ALL.iter().for_each(|kind| {
+                                        combo.selectable_value(
+                                            &mut self.m_kind,
+                                            kind.clone(),
+                                            kind.as_str(),
+                                        );
+                                    })
+                                });
+
+                            vert.add_space(16.0);
+                            vert.checkbox(&mut self.m_verbose, "Verbose output");
+                            if vert.button("Calculate").clicked() {
+                                self.m_stats = None;
+                                self.m_error = None;
+                                self.method_result = match self.m_kind {
+                                    MethodKind::Simple => {
+                                        Some(MethodResult::Simple(eq.clone(), self.m_interval))
+                                    }
+                                    MethodKind::Bisection => {
+                                        let precision =
+                                            1.0 / 10.0_f64.powi(self.m_precision as i32);
+                                        self.m_log.extend([
+                                            String::new(),
+                                            format!("> Bisection ({})", eq),
+                                            format!("Precision: {precision}"),
+                                            format!("Interval: {:?}", self.m_interval),
+                                        ]);
+
+                                        match Method::new(
+                                            self.m_limit as u128,
+                                            OutPut::Vec(&mut self.m_log),
+                                        )
+                                        .verbose(if self.m_verbose { 1 } else { 0 })
+                                        .bisection(
+                                            eq.clone(),
+                                            self.m_interval,
+                                            precision,
+                                        ) {
+                                            Ok(result) => {
+                                                self.m_log.push(format!(
+                                                    "Root: x={} (f(x)={})",
+                                                    result.root.0, result.root.1
+                                                ));
+                                                self.m_stats = Some(result.stats);
+                                                Some(MethodResult::Bisection(
+                                                    eq.clone(),
+                                                    self.m_interval,
+                                                    result.root,
+                                                ))
+                                            }
+                                            Err(err) => {
+                                                self.m_log
+                                                    .push(format!("Error: '{}'", err.to_string()));
+                                                self.m_error = Some(err.to_string());
+                                                None
+                                            }
+                                        }
+                                    }
+                                };
+                            }
+
+                            if let Some(err) = &self.m_error {
+                                vert.label(RichText::new(err).size(16.0).color(Color32::RED));
+                            }
+                        });
+
+                        hor.vertical(|vert| {
+                            vert.collapsing("Options", |col| {
+                                const SIZE: f32 = 192.0; // FIX
+
+                                if matches!(self.m_kind, MethodKind::Simple | MethodKind::Bisection)
+                                {
+                                    col.label("Interval");
+                                    col.vertical(|vert| {
+                                        vert.add_sized(
+                                            [SIZE, 1.0],
+                                            DragValue::new(&mut self.m_interval.0)
+                                                .prefix("a: ")
+                                                .clamp_range(METHOD_INTERVAL_LIMIT_RANGE)
+                                                .speed(0.1),
+                                        );
+                                    });
+                                    col.vertical(|vert| {
+                                        vert.add_sized(
+                                            [SIZE, 1.0],
+                                            DragValue::new(&mut self.m_interval.1)
+                                                .prefix("b: ")
+                                                .clamp_range(METHOD_INTERVAL_LIMIT_RANGE)
+                                                .speed(0.1),
+                                        );
+                                    });
+                                }
+
+                                if matches!(self.m_kind, MethodKind::Bisection) {
+                                    col.label("Method precision");
+                                    col.vertical(|vert| {
+                                        vert.add_sized(
+                                            [SIZE, 1.0],
+                                            DragValue::new(&mut self.m_precision)
+                                                .prefix("Precision: ")
+                                                .clamp_range(METHOD_PRECISION_RANGE)
+                                                .speed(1),
+                                        );
+                                    });
+                                }
+
+                                if matches!(self.m_kind, MethodKind::Bisection) {
+                                    col.label("Iterations limit");
+                                    col.vertical(|vert| {
+                                        vert.add_sized(
+                                            [SIZE, 1.0],
+                                            DragValue::new(&mut self.m_limit)
+                                                .prefix("Limit: ")
+                                                .suffix(" iters")
+                                                .clamp_range(METHOD_ITER_LIMIT_RANGE)
+                                                .speed(10),
+                                        );
+                                    });
+                                }
+                            });
+
+                            if let Some(stats) = &self.m_stats {
+                                vert.collapsing("Last method results", |col| {
+                                    col.label(format!("Time elapsed: {:?}", stats.elapsed));
+                                    col.label(format!("Iterations: {}", stats.iterations));
+                                });
+                            }
+                        });
+                    });
+                } else {
+                    ui.label("No equation selected");
+                }
+
+                ui.separator();
+                // FIX: Infinity allocation
+                ScrollArea::both()
+                    .auto_shrink([false; 2])
+                    .stick_to_bottom()
+                    .show_rows(
+                        ui,
+                        ui.text_style_height(&TextStyle::Body),
+                        self.m_log.len(),
+                        |scroll, range| {
+                            range.for_each(|i| {
+                                scroll.add(Label::new(&self.m_log[i]).wrap(false));
+                            })
+                        },
+                    );
             });
 
         Window::new("Graph Viewer")
@@ -157,20 +410,26 @@ impl EApp for App {
                             wrap.label(RichText::new("Info").text_style(TextStyle::Heading))
                         });
                         panel.separator();
-                        if let Some(id) = self.eq_storage.selected {
-                            panel.label(&format!("Selected function: #{id}"));
+                        if let Some(result) = &self.method_result {
+                            panel.label("Method:");
+                            panel.label(
+                                RichText::new(self.m_kind.as_str())
+                                    .text_style(TextStyle::Monospace),
+                            );
+                            panel.label("Method equation:");
                             ScrollArea::horizontal().show(panel, |scroll| {
-                                scroll.add(
-                                    Label::new(
-                                        RichText::new(format!("{}", self.eq_storage.content[id]))
+                                scroll.add(match result {
+                                    MethodResult::Simple(eq, ..)
+                                    | MethodResult::Bisection(eq, ..) => Label::new(
+                                        RichText::new(format!("{}", eq))
                                             .text_style(TextStyle::Monospace)
                                             .size(24.0),
                                     )
                                     .wrap(false),
-                                )
+                                })
                             });
                         } else {
-                            panel.label("No function selected");
+                            panel.label("No method has been run");
                         }
                         panel.add_space(16.0);
                         panel.horizontal(|wrap| {
@@ -206,25 +465,50 @@ impl EApp for App {
                     plot = plot.data_aspect(1.0);
                 }
 
-                plot.show(ui, |plot| match self.eq_storage.get_selected() {
-                    Some(eq) => {
-                        let eqc = eq.clone();
-                        plot.line(
-                            Line::new(Values::from_explicit_callback(
-                                move |x| eqc.eval(x).expect("Unreachable"),
-                                f64::NEG_INFINITY..f64::INFINITY,
-                                self.precision,
-                            ))
-                            .highlight(true)
-                            .name("Equation"),
-                        )
-                    }
-                    None => plot.text(
-                        Text::new(Value::new(0.0, 0.0), RichText::new("Error").size(32.0))
-                            .highlight(true)
-                            .color(Color32::RED)
-                            .anchor(Align2::CENTER_CENTER),
-                    ),
+                // DRY
+                #[inline]
+                fn show_line(
+                    plot: &mut PlotUi,
+                    eq: MethodEquation,
+                    interval: Interval,
+                    precision: usize,
+                ) {
+                    plot.line(
+                        Line::new(Values::from_explicit_callback(
+                            move |x| eq.eval(x).expect("Unreachable"),
+                            interval.0..=interval.1,
+                            precision,
+                        ))
+                        .highlight(true)
+                        .name("Equation"),
+                    )
+                }
+
+                plot.show(ui, |plot| match &self.method_result {
+                    Some(result) => match result {
+                        MethodResult::Simple(eq, interval) => {
+                            show_line(plot, eq.clone(), *interval, self.precision)
+                        }
+                        MethodResult::Bisection(eq, (a, b), (x, y)) => {
+                            show_line(plot, eq.clone(), (a - 1.0, b + 1.0), self.precision);
+                            plot.vline(
+                                VLine::new(*a)
+                                    .style(LineStyle::dashed_loose())
+                                    .name("Interval"),
+                            );
+                            plot.vline(
+                                VLine::new(*b)
+                                    .style(LineStyle::dashed_loose())
+                                    .name("Interval"),
+                            );
+                            plot.points(
+                                Points::new(Values::from_values(vec![Value::new(*x, *y)]))
+                                    .radius(5.0)
+                                    .name("Root"),
+                            )
+                        }
+                    },
+                    None => (),
                 })
             });
 

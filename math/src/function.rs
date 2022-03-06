@@ -2,6 +2,7 @@ use crate::variable::OpType;
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum Func {
+    Sqrt,
     Sin,
     Cos,
     Tan,
@@ -9,13 +10,15 @@ pub enum Func {
 
 impl Func {
     pub fn eval(&self, args: Vec<OpType>) -> OpType {
+        use Func::*;
         const MSG: &str = "Arg not found";
 
         // TODO: Enhance handling
         match self {
-            Func::Sin => args.get(0).expect(MSG).sin(),
-            Func::Cos => args.get(0).expect(MSG).cos(),
-            Func::Tan => args.get(0).expect(MSG).tan(),
+            Sqrt => args.get(0).expect(MSG).sqrt(),
+            Sin => args.get(0).expect(MSG).sin(),
+            Cos => args.get(0).expect(MSG).cos(),
+            Tan => args.get(0).expect(MSG).tan(),
         }
     }
 
@@ -24,6 +27,7 @@ impl Func {
         use Func::*;
 
         match self {
+            Sqrt => 1,
             Sin => 1,
             Cos => 1,
             Tan => 1,
@@ -31,18 +35,24 @@ impl Func {
     }
 
     pub fn as_str(&self) -> &str {
+        use Func::*;
+
         match self {
-            Func::Sin => "sin",
-            Func::Cos => "cos",
-            Func::Tan => "tan",
+            Sqrt => "sqrt",
+            Sin => "sin",
+            Cos => "cos",
+            Tan => "tan",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
+        use Func::*;
+
         match s {
-            "sin" => Some(Func::Sin),
-            "cos" => Some(Func::Cos),
-            "tan" => Some(Func::Tan),
+            "sqrt" => Some(Sqrt),
+            "sin" => Some(Sin),
+            "cos" => Some(Cos),
+            "tan" => Some(Tan),
             _ => None,
         }
     }
