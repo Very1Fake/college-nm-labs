@@ -10,4 +10,3 @@ pub const INLINED: usize = 8;
 
 // TODO: Add expression derivatives
 // TODO: Add equations
-// TODO: Make criterion benches

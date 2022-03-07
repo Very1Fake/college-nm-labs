@@ -8,7 +8,7 @@ use crate::token::{LexError, Precedence, Token, TokenStream, Tokenizer};
 
 const NEVER_ENDS: &str = "`TokenStream` never ends";
 
-const LEVEL_LIMIT: usize = 500;
+const LEVEL_LIMIT: usize = 1000;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 

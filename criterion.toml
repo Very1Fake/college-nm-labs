@@ -1,0 +1,2 @@
+criterion_home = "./target/criterion"
+ploting_backend = "plotter"
