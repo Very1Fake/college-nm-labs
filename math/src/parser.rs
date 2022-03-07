@@ -363,33 +363,36 @@ mod tests {
 
     #[test]
     fn parse_var_const() -> Result<()> {
-        let input_1 = "2y";
-        let input_2 = "x^e";
-        let input_3 = "2e";
+        let input_coef_var = "2y";
+        let input_pow = "x^e";
+        let input_coef_const = "2e";
 
-        assert_eq!(parse(input_1)?, 2.0 * Expr::var("y"));
+        assert_eq!(parse(input_coef_var)?, 2.0 * Expr::var("y"));
         assert_eq!(
-            parse(input_2)?,
+            parse(input_pow)?,
             Expr::var("x").pow(Expr::MathConst(MathConst::E))
         );
-        assert_eq!(parse(input_3)?, 2.0 * Expr::MathConst(MathConst::E));
+        assert_eq!(
+            parse(input_coef_const)?,
+            2.0 * Expr::MathConst(MathConst::E)
+        );
 
         Ok(())
     }
 
     #[test]
     fn parse_func() -> Result<()> {
-        let input_1 = "cos(2)";
-        let input_2 = "2sin(x)";
-        let input_3 = "tan(-2x)"; // FIX
+        let input_cos = "cos(2)";
+        let input_sin = "2sin(x)";
+        let input_tan = "tan(-2x)";
 
         assert_eq!(
-            parse(input_1)?,
+            parse(input_cos)?,
             Expr::Func(Func::Cos, vec![Expr::Const(2.0)])
         );
 
         assert_eq!(
-            parse(input_2)?,
+            parse(input_sin)?,
             Expr::Op(
                 Op::Mul,
                 Box::new((
@@ -400,12 +403,12 @@ mod tests {
         );
 
         assert_eq!(
-            parse(input_3)?,
+            parse(input_tan)?,
             Expr::Func(
                 Func::Tan,
                 vec![Expr::Op(
                     Op::Mul,
-                    Box::new((Expr::Const(-2.0), Expr::var("-x")))
+                    Box::new((Expr::Const(-2.0), Expr::var("x")))
                 )]
             )
         );
@@ -416,10 +419,7 @@ mod tests {
     #[test]
     fn parse_full() -> Result<()> {
         let script = "2x^3+2";
-
-        let mut scope = Scope::default();
-        scope.insert(Var::new("x", 4.0));
-
+        let scope = Scope::Single(Var::new("x", 4.0));
         let expected = (2.0 * Expr::var("x")).powf(3.0) + 2.0; // Answer: 514
 
         assert_eq!(parse(script)?.eval(&scope)?, expected.eval(&scope)?);

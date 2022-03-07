@@ -3,7 +3,7 @@ use core::{iter::Peekable, num::NonZeroU8, str::Chars};
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::{ops::Op, variable::OpType};
+use crate::ops::Op;
 
 const INLINE: usize = 16;
 
@@ -26,7 +26,7 @@ pub enum Token {
     /// `\n` symbol
     NewLine,
     /// Number constant
-    Number(OpType),
+    Number(f64),
     /// Identifier (variable or function name)
     Identifier(String),
     /// `(`
@@ -162,7 +162,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                         let out: String =
                             result.iter().filter(|&&c| c != NUMBER_SEPARATOR).collect();
 
-                        out.parse::<OpType>()
+                        out.parse::<f64>()
                             .map(Token::Number)
                             .unwrap_or_else(|_| Token::LexError(LexError::MalformedNumber(out)))
                     });

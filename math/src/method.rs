@@ -8,12 +8,12 @@ use thiserror::Error;
 
 use crate::{
     expression::{Evaluable, EvaluationError, Expr},
-    variable::{OpType, Scope, Var},
+    variable::{Scope, Var},
 };
 
 const MAX_ITERS_DEFAULT: u128 = 1_000_000;
 
-pub type Interval = (OpType, OpType);
+pub type Interval = (f64, f64);
 
 #[derive(Error, Debug)]
 pub enum MethodError {
@@ -33,7 +33,7 @@ pub struct CallStats {
 
 #[derive(Debug)]
 pub struct MethodResult {
-    pub root: (OpType, OpType),
+    pub root: (f64, f64),
     pub stats: CallStats,
 }
 
@@ -57,7 +57,7 @@ impl<'a> OutPut<'a> {
 
 // -------------------------------------------------------------------------------------------------
 
-type ExternalFunction = fn(OpType) -> OpType;
+type ExternalFunction = fn(f64) -> f64;
 
 #[derive(Clone)]
 pub enum MethodEquation {
@@ -91,14 +91,9 @@ impl Display for MethodEquation {
 }
 
 impl MethodEquation {
-    pub fn eval(&self, x: OpType) -> Result<OpType, EvaluationError> {
+    pub fn eval(&self, x: f64) -> Result<f64, EvaluationError> {
         match self {
-            MethodEquation::Math(expr) => {
-                let mut scope = Scope::default();
-                scope.insert(Var::new("x", x));
-
-                expr.eval(&scope)
-            }
+            MethodEquation::Math(expr) => expr.eval(&Scope::Single(Var::new("x", x))),
             MethodEquation::Internal(f) => Ok(f(x)),
         }
     }
@@ -142,7 +137,7 @@ impl<'a> Method<'a> {
         mut self,
         f: MethodEquation,
         interval: Interval,
-        precision: OpType,
+        precision: f64,
     ) -> Result<MethodResult, MethodError> {
         let (mut a, mut b) = interval;
 
@@ -224,7 +219,7 @@ impl Default for Method<'_> {
 // -------------------------------------------------------------------------------------------------
 
 #[inline(always)]
-fn sign_diff(lhs: OpType, rhs: OpType) -> bool {
+fn sign_diff(lhs: f64, rhs: f64) -> bool {
     lhs * rhs < 0.0
 }
 

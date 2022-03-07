@@ -5,7 +5,6 @@ use nm_math::{
     method::{Method, MethodEquation, OutPut},
     parser::parse,
     token::LexError,
-    variable::OpType,
 };
 
 fn main() -> Result<()> {
@@ -35,7 +34,7 @@ fn main() -> Result<()> {
             .value_names(&["a", "b"])
             .number_of_values(2)
             .default_values(&["-1", "1"])
-            .validator(|x| x.parse::<OpType>())
+            .validator(|x| x.parse::<f64>())
             .allow_hyphen_values(true)
         )
         .arg(
@@ -46,7 +45,7 @@ fn main() -> Result<()> {
                 .value_name("epsilon")
                 .takes_value(true)
                 .default_value("0.001")
-                .validator(|x| if let Ok(f) = x.parse::<OpType>() {
+                .validator(|x| if let Ok(f) = x.parse::<f64>() {
                     if f < 0.0 {
                         Err(LexError::MalformedNumber(f.to_string()))
                     } else {

@@ -10,7 +10,7 @@ use crate::{function::Func, token::Token};
 
 use super::{
     ops::Op,
-    variable::{OpType, Scope, VarName},
+    variable::{Scope, VarName},
 };
 
 pub type EvaluationResult<T> = Result<T, EvaluationError>;
@@ -24,7 +24,7 @@ pub enum EvaluationError {
 }
 
 pub trait Evaluable {
-    fn eval(&self, scope: &Scope) -> EvaluationResult<OpType>;
+    fn eval(&self, scope: &Scope) -> EvaluationResult<f64>;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ pub enum MathConst {
 
 impl MathConst {
     /// Get math constant value
-    pub fn value(&self) -> OpType {
+    pub fn value(&self) -> f64 {
         match self {
             Self::E => E,
             Self::Pi => PI,
@@ -64,12 +64,13 @@ impl MathConst {
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum Expr {
-    Const(OpType),
+    Const(f64),
     MathConst(MathConst),
     Var(VarName),
     Op(Op, Box<(Self, Self)>),
     Func(Func, Vec<Self>),
     Brackets(Box<Expr>),
+    Neg(Box<Expr>),
 }
 
 impl Expr {
@@ -94,7 +95,7 @@ impl Expr {
 }
 
 impl Evaluable for Expr {
-    fn eval(&self, scope: &Scope) -> EvaluationResult<OpType> {
+    fn eval(&self, scope: &Scope) -> EvaluationResult<f64> {
         use Expr::*;
 
         match self {
@@ -108,9 +109,10 @@ impl Evaluable for Expr {
             Func(func, args) => Ok(func.eval(
                 args.iter()
                     .map(|expr| expr.eval(scope))
-                    .collect::<EvaluationResult<Vec<OpType>>>()?,
+                    .collect::<EvaluationResult<Vec<f64>>>()?,
             )),
             Brackets(expr) => expr.eval(scope),
+            Neg(expr) => Ok(expr.eval(scope)? * -1.0),
         }
     }
 }
@@ -123,13 +125,15 @@ impl Default for Expr {
 
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Expr::*;
+
         match self {
-            Self::Const(num) => f.write_str(&num.to_string()),
-            Self::MathConst(constant) => f.write_str(constant.as_str()),
-            Self::Var(name) => f.write_str(name),
-            Self::Op(op, ops) => match op {
-                Op::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
-                Op::Mul => match **ops {
+            Const(num) => f.write_str(&num.to_string()),
+            MathConst(constant) => f.write_str(constant.as_str()),
+            Var(name) => f.write_str(name),
+            Op(op, ops) => match op {
+                crate::ops::Op::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
+                crate::ops::Op::Mul => match **ops {
                     (Expr::Const(_), Expr::Var(_) | Expr::Func(..)) => {
                         ops.0.fmt(f)?;
                         ops.1.fmt(f)
@@ -138,7 +142,7 @@ impl fmt::Display for Expr {
                 },
                 _ => write!(f, "{} {} {}", ops.0, op.as_str(), ops.1),
             },
-            Self::Func(func, args) => {
+            Func(func, args) => {
                 f.write_str(func.as_str())?;
                 f.write_str("(")?;
                 for (i, expr) in args.iter().enumerate() {
@@ -149,7 +153,11 @@ impl fmt::Display for Expr {
                 }
                 f.write_str(")")
             }
-            Self::Brackets(expr) => write!(f, "({expr})"),
+            Brackets(expr) => write!(f, "({expr})"),
+            Neg(expr) => {
+                f.write_str("-")?;
+                expr.fmt(f)
+            }
         }
     }
 }
@@ -204,18 +212,26 @@ impl Neg for Expr {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        // TODO: Optimize further
         match self {
+            // For a constant, reverse sign
             Expr::Const(num) => Expr::Const(-num),
-            _ => self * -1.0,
+            // For terms like '-2x', reverse sign for coefficient
+            Expr::Op(Op::Mul, mut ops)
+                if matches!(ops.0, Expr::Const(_)) && matches!(ops.1, Expr::Var(_)) =>
+            {
+                ops.0 = -ops.0;
+                Expr::Op(Op::Mul, ops)
+            }
+            // Otherwise, multiply by -1
+            _ => Expr::Neg(Box::new(self)),
         }
     }
 }
 
-impl Add<OpType> for Expr {
+impl Add<f64> for Expr {
     type Output = Self;
 
-    fn add(self, rhs: OpType) -> Self::Output {
+    fn add(self, rhs: f64) -> Self::Output {
         Self::Op(
             Op::Add,
             Box::new((self.brace_if(&Op::Add), Self::Const(rhs))),
@@ -223,10 +239,10 @@ impl Add<OpType> for Expr {
     }
 }
 
-impl Sub<OpType> for Expr {
+impl Sub<f64> for Expr {
     type Output = Self;
 
-    fn sub(self, rhs: OpType) -> Self::Output {
+    fn sub(self, rhs: f64) -> Self::Output {
         Self::Op(
             Op::Sub,
             Box::new((self.brace_if(&Op::Sub), Self::Const(rhs))),
@@ -234,10 +250,10 @@ impl Sub<OpType> for Expr {
     }
 }
 
-impl Mul<OpType> for Expr {
+impl Mul<f64> for Expr {
     type Output = Self;
 
-    fn mul(self, rhs: OpType) -> Self::Output {
+    fn mul(self, rhs: f64) -> Self::Output {
         Self::Op(
             Op::Mul,
             Box::new((self.brace_if(&Op::Mul), Self::Const(rhs))),
@@ -245,10 +261,10 @@ impl Mul<OpType> for Expr {
     }
 }
 
-impl Div<OpType> for Expr {
+impl Div<f64> for Expr {
     type Output = Self;
 
-    fn div(self, rhs: OpType) -> Self::Output {
+    fn div(self, rhs: f64) -> Self::Output {
         Self::Op(
             Op::Div,
             Box::new((self.brace_if(&Op::Div), Self::Const(rhs))),
@@ -256,7 +272,7 @@ impl Div<OpType> for Expr {
     }
 }
 
-impl Add<Expr> for OpType {
+impl Add<Expr> for f64 {
     type Output = Expr;
 
     fn add(self, rhs: Expr) -> Self::Output {
@@ -267,7 +283,7 @@ impl Add<Expr> for OpType {
     }
 }
 
-impl Sub<Expr> for OpType {
+impl Sub<Expr> for f64 {
     type Output = Expr;
 
     fn sub(self, rhs: Expr) -> Self::Output {
@@ -278,7 +294,7 @@ impl Sub<Expr> for OpType {
     }
 }
 
-impl Mul<Expr> for OpType {
+impl Mul<Expr> for f64 {
     type Output = Expr;
 
     fn mul(self, rhs: Expr) -> Self::Output {
@@ -289,7 +305,7 @@ impl Mul<Expr> for OpType {
     }
 }
 
-impl Div<Expr> for OpType {
+impl Div<Expr> for f64 {
     type Output = Expr;
 
     fn div(self, rhs: Expr) -> Self::Output {
@@ -300,8 +316,8 @@ impl Div<Expr> for OpType {
     }
 }
 
-impl From<OpType> for Expr {
-    fn from(num: OpType) -> Self {
+impl From<f64> for Expr {
+    fn from(num: f64) -> Self {
         Expr::Const(num)
     }
 }
@@ -324,7 +340,7 @@ impl Expr {
         )
     }
 
-    pub fn powf(self, rhs: OpType) -> Self {
+    pub fn powf(self, rhs: f64) -> Self {
         Expr::Op(Op::Pow, Box::new((self.brace_if(&Op::Pow), rhs.into())))
     }
 
@@ -364,11 +380,13 @@ mod tests {
     #[test]
     fn fmt_var() {
         let var = Expr::var("x");
+        let var_neg = -Expr::var("z");
         let var_var = Expr::var("y") * Expr::var("x");
         let var_coef = 4.75 * Expr::var("y");
         let var_no_coef = 12.5 + Expr::var("z");
 
         assert_eq!(format!("{var}"), "x");
+        assert_eq!(format!("{var_neg}"), "-z");
         assert_eq!(format!("{var_var}"), "y * x");
         assert_eq!(format!("{var_coef}"), "4.75y");
         assert_eq!(format!("{var_no_coef}"), "12.5 + z");
@@ -411,7 +429,7 @@ mod tests {
     fn eval_const() -> Result<()> {
         let c = Expr::Const(2.0);
 
-        assert_eq!(c.eval(&Scope::default())?, 2.0);
+        assert_eq!(c.eval(&Scope::Empty)?, 2.0);
 
         Ok(())
     }
@@ -421,8 +439,7 @@ mod tests {
         let var = Expr::var("x");
         let var_coef = 3.2 * Expr::var("x");
 
-        let mut scope = Scope::default();
-        scope.insert(Var::new("x", 5.0));
+        let scope = Scope::Single(Var::new("x", 5.0));
 
         assert_eq!(var.eval(&scope)?, 5.0);
         assert_eq!(var_coef.eval(&scope)?, 16.0);
@@ -434,7 +451,7 @@ mod tests {
     fn eval_exp() -> Result<()> {
         let exp = Expr::Const(2.0).powf(10.0);
 
-        assert_eq!(exp.eval(&Scope::default())?, 1024.0);
+        assert_eq!(exp.eval(&Scope::Empty)?, 1024.0);
 
         Ok(())
     }
@@ -444,8 +461,8 @@ mod tests {
         let func_sin = Expr::Const(4.0).sin();
         let func_cos = Expr::Const(5.0).cos();
 
-        assert_eq!(func_sin.eval(&Scope::default())?, -0.7568024953079282);
-        assert_eq!(func_cos.eval(&Scope::default())?, 0.28366218546322625);
+        assert_eq!(func_sin.eval(&Scope::Empty)?, -0.7568024953079282);
+        assert_eq!(func_cos.eval(&Scope::Empty)?, 0.28366218546322625);
 
         Ok(())
     }
@@ -455,8 +472,7 @@ mod tests {
         let expr_1 = 2.0 * Expr::var("x") + 12.75;
         let expr_2 = (Expr::Const(12.0) - 3.0) * 3.0 * Expr::var("x");
         let expr_3 = (4.5 + Expr::var("x")).powf(2.0) / 2.5;
-        let mut scope = Scope::default();
-        scope.insert(Var::new("x", 4.5));
+        let scope = Scope::Single(Var::new("x", 4.5));
 
         assert_eq!(expr_1.eval(&scope)?, 21.75);
         assert_eq!(expr_2.eval(&scope)?, 121.5);

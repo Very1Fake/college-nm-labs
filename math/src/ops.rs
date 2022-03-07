@@ -1,11 +1,7 @@
 use core::ops::{Add, Div, Mul, Sub};
 
-use crate::{
-    expression::{EvaluationError, EvaluationResult},
-    variable::OpType,
-};
+use crate::expression::{EvaluationError, EvaluationResult};
 
-// TODO: Add modulo
 #[derive(PartialOrd, PartialEq, Clone, Debug)]
 pub enum Op {
     Sub = 1,
@@ -28,7 +24,7 @@ impl Op {
         }
     }
 
-    pub fn calc(&self, lhs: OpType, rhs: OpType) -> EvaluationResult<OpType> {
+    pub fn calc(&self, lhs: f64, rhs: f64) -> EvaluationResult<f64> {
         use Op::*;
 
         Ok(match self {
