@@ -1,4 +1,5 @@
 use std::{
+    f64::EPSILON,
     fmt::{self, Display},
     time::Duration,
     time::Instant,
@@ -21,6 +22,8 @@ pub enum MethodError {
     IterationsExceeded(u128),
     #[error("Evaluation error while execution method: {0}")]
     EvaluationError(#[from] EvaluationError),
+    #[error("Given precision is less than machine epsilon")]
+    MachineEpsilon,
     #[error("{0}")]
     Other(String),
 }
@@ -97,6 +100,14 @@ impl MethodEquation {
             MethodEquation::Internal(f) => Ok(f(x)),
         }
     }
+
+    pub fn math(&self) -> Option<&Expr> {
+        if let Self::Math(eq) = self {
+            Some(eq)
+        } else {
+            None
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -134,12 +145,17 @@ impl<'a> Method<'a> {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     pub fn bisection(
+        // TODO: Machine epsilon check
         mut self,
         f: MethodEquation,
         interval: Interval,
         precision: f64,
     ) -> Result<MethodResult, MethodError> {
         let (mut a, mut b) = interval;
+
+        if precision < EPSILON {
+            return Err(MethodError::MachineEpsilon);
+        }
 
         if sign_diff(
             f.eval(a).map_err(MethodError::EvaluationError)?,
@@ -152,22 +168,15 @@ impl<'a> Method<'a> {
 
                 // Print iterations result
                 if self.verbose >= 1 {
+                    self.out
+                        .print(format!("Iter({}): [{a}; {b}]; xi = {xi}", self.iterations,));
+                } else if self.verbose >= 2 {
                     self.out.print(format!(
-                        "Iter({}): [{a}; {b}], xi = {xi} ([{}; {}] {})",
+                        "Iter({}): [{a}; {b}]; xi = {xi}; ([{}; {}] {})",
                         self.iterations,
                         f.eval(a).map_err(MethodError::EvaluationError)?,
                         f.eval(b).map_err(MethodError::EvaluationError)?,
                         f.eval(xi).map_err(MethodError::EvaluationError)?
-                    ));
-                }
-
-                // Print iterations precision check
-                if self.verbose == 2 {
-                    self.out.print(format!(
-                        "Iter({}): Precision check |{}| < {precision}",
-                        self.iterations,
-                        f.eval(b).map_err(MethodError::EvaluationError)?
-                            - f.eval(a).map_err(MethodError::EvaluationError)?
                     ));
                 }
 
@@ -182,11 +191,7 @@ impl<'a> Method<'a> {
                 }
 
                 // Check precision
-                if (f.eval(b).map_err(MethodError::EvaluationError)?
-                    - f.eval(a).map_err(MethodError::EvaluationError)?)
-                .abs()
-                    < precision
-                {
+                if (a - b).abs() < precision {
                     let result = (b + a) / 2.0;
                     return Ok(MethodResult {
                         root: (
@@ -208,6 +213,14 @@ impl<'a> Method<'a> {
             )))
         }
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // Chord method
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // pub fn chord(mut self, f: MethodEquation, ) -> Result<MethodResult, MethodError> {
+
+    // }
 }
 
 impl Default for Method<'_> {

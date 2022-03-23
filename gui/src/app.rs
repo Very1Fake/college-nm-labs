@@ -19,6 +19,7 @@ use nm_math::{
 
 use crate::storage::Storage;
 
+const INFINITE_INTERVAL: (f64, f64) = (f64::NEG_INFINITY, f64::INFINITY);
 const METHOD_INTERVAL_LIMIT_RANGE: RangeInclusive<f64> = f64::NEG_INFINITY..=f64::INFINITY;
 const METHOD_PRECISION_RANGE: RangeInclusive<i32> = 0..=24;
 const METHOD_ITER_LIMIT_RANGE: RangeInclusive<usize> = 1..=usize::MAX;
@@ -27,17 +28,19 @@ const GRAPH_PRECISION_RANGE: RangeInclusive<usize> = 10..=10000;
 #[derive(PartialEq, Clone)]
 pub enum MethodKind {
     Simple,
+    Derivative,
     Bisection,
 }
 
 impl MethodKind {
-    const ALL: [Self; 2] = [Self::Simple, Self::Bisection];
+    const ALL: [Self; 3] = [Self::Simple, Self::Derivative, Self::Bisection];
 
     pub fn as_str(&self) -> &str {
         use MethodKind::*;
 
         match self {
             Simple => "Simple",
+            Derivative => "Derivative",
             Bisection => "Bisection",
         }
     }
@@ -51,9 +54,23 @@ impl Default for MethodKind {
 
 pub enum MethodResult {
     // Simple function. Stores: equation, interval
-    Simple(MethodEquation, Interval),
+    Simple(MethodEquation),
+    // Derivative of given function. Stores: equation, interval
+    Derivative(MethodEquation),
     // Bisection method. Stores: equation, interval, root point
     Bisection(MethodEquation, Interval, (f64, f64)),
+}
+
+impl MethodResult {
+    pub fn as_str(&self) -> &str {
+        use MethodResult::*;
+
+        match self {
+            Simple(_) => "Simple",
+            Derivative(_) => "Derivative",
+            Bisection(..) => "Bisection",
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -162,7 +179,7 @@ impl EApp for App {
             .open(&mut self.eq_viewer)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("Reset").size(20.0)).clicked() {
+                    if ui.button(RichText::new("Clear").size(20.0)).clicked() {
                         self.eq_storage.clear();
                     }
                     ui.collapsing(RichText::new("Add new ").size(20.0), |col| {
@@ -263,50 +280,66 @@ impl EApp for App {
                             if vert.button("Calculate").clicked() {
                                 self.m_stats = None;
                                 self.m_error = None;
-                                self.method_result =
-                                    match self.m_kind {
-                                        MethodKind::Simple => {
-                                            Some(MethodResult::Simple(eq.clone(), self.m_interval))
-                                        }
-                                        MethodKind::Bisection => {
-                                            let precision =
-                                                1.0 / 10.0_f64.powi(self.m_precision as i32);
-                                            self.log.extend([
-                                                String::new(),
-                                                format!("> Bisection ({})", eq),
-                                                format!("Precision: {precision}"),
-                                                format!("Interval: {:?}", self.m_interval),
-                                            ]);
-
-                                            match Method::new(
-                                                self.m_limit as u128,
-                                                OutPut::Vec(&mut self.log),
-                                            )
-                                            .verbose(if self.m_verbose { 1 } else { 0 })
-                                            .bisection(eq.clone(), self.m_interval, precision)
-                                            {
-                                                Ok(result) => {
-                                                    self.log.push(format!(
-                                                        "Root: x={} (f(x)={})",
-                                                        result.root.0, result.root.1
-                                                    ));
-                                                    self.m_stats = Some(result.stats);
-                                                    Some(MethodResult::Bisection(
-                                                        eq.clone(),
-                                                        self.m_interval,
-                                                        result.root,
-                                                    ))
-                                                }
+                                self.method_result = match self.m_kind {
+                                    MethodKind::Simple => Some(MethodResult::Simple(eq.clone())),
+                                    MethodKind::Derivative => if let Some(eq) = eq.math() {
+                                            match eq.derivative().fix().optimize() {
+                                                Ok(result) => Some(MethodResult::Derivative(MethodEquation::Math(result))),
                                                 Err(err) => {
-                                                    self.log.push(format!("Error: '{err}'"));
+                                                    self.log.push(format!("Error while optimizing derivative: '{err}'"));
                                                     self.m_error = Some(err.to_string());
                                                     None
                                                 }
                                             }
+                                        } else {
+                                            self.log.push(format!("Can't differentiate internal rust function"));
+                                            self.m_error = Some(String::from("Can't differentiate internal rust function"));
+                                            None
+                                        },
+                                    MethodKind::Bisection => {
+                                        let precision =
+                                            1.0 / 10.0_f64.powi(self.m_precision as i32);
+                                        self.log.extend([
+                                            String::new(),
+                                            format!("> Bisection ({})", eq),
+                                            format!("Precision: {precision}"),
+                                            format!("Interval: {:?}", self.m_interval),
+                                        ]);
+
+                                        match Method::new(
+                                            self.m_limit as u128,
+                                            OutPut::Vec(&mut self.log),
+                                        )
+                                        .verbose(if self.m_verbose { 1 } else { 0 })
+                                        .bisection(
+                                            eq.clone(),
+                                            self.m_interval,
+                                            precision,
+                                        ) {
+                                            Ok(result) => {
+                                                self.log.push(format!(
+                                                    "Root: x={} (f(x)={})",
+                                                    result.root.0, result.root.1
+                                                ));
+                                                self.m_stats = Some(result.stats);
+                                                Some(MethodResult::Bisection(
+                                                    eq.clone(),
+                                                    self.m_interval,
+                                                    result.root,
+                                                ))
+                                            }
+                                            Err(err) => {
+                                                self.log.push(format!("Error: '{err}'"));
+                                                self.m_error = Some(err.to_string());
+                                                None // FIX: check boundaries
+                                            }
                                         }
-                                    };
+                                    }
+                                };
                             }
                         });
+
+                        hor.separator();
 
                         hor.vertical(|vert| {
                             ComboBox::from_label("Choose method")
@@ -323,10 +356,7 @@ impl EApp for App {
 
                             vert.collapsing("Options", |col| {
                                 col.vertical_centered_justified(|center| {
-                                    if matches!(
-                                        self.m_kind,
-                                        MethodKind::Simple | MethodKind::Bisection
-                                    ) {
+                                    if matches!(self.m_kind, MethodKind::Bisection) {
                                         center.label("Interval");
                                         center.add(
                                             DragValue::new(&mut self.m_interval.0)
@@ -348,7 +378,7 @@ impl EApp for App {
                                             DragValue::new(&mut self.m_precision)
                                                 .prefix("Precision: ")
                                                 .clamp_range(METHOD_PRECISION_RANGE)
-                                                .speed(1),
+                                                .speed(0.1),
                                         );
                                     }
 
@@ -373,6 +403,24 @@ impl EApp for App {
                             }
                         });
                     });
+
+                    if let Some(result) = &self.method_result {
+                        if let MethodResult::Simple(..) = &result {
+                        } else {
+                            ui.separator();
+                            ui.label(RichText::new("Result").text_style(TextStyle::Heading));
+
+                            match result {
+                                MethodResult::Bisection(_, _, (x, y)) => {
+                                    ui.label(
+                                        RichText::new(format!("x = {x}; y = {y}"))
+                                            .text_style(TextStyle::Monospace),
+                                    );
+                                }
+                                _ => (),
+                            }
+                        }
+                    }
                 } else {
                     ui.label("No equation selected");
                 }
@@ -392,13 +440,13 @@ impl EApp for App {
                         if let Some(result) = &self.method_result {
                             panel.label("Method:");
                             panel.label(
-                                RichText::new(self.m_kind.as_str())
-                                    .text_style(TextStyle::Monospace),
+                                RichText::new(result.as_str()).text_style(TextStyle::Monospace),
                             );
                             panel.label("Method equation:");
                             ScrollArea::horizontal().show(panel, |scroll| {
                                 scroll.add(match result {
-                                    MethodResult::Simple(eq, ..)
+                                    MethodResult::Simple(eq)
+                                    | MethodResult::Derivative(eq)
                                     | MethodResult::Bisection(eq, ..) => Label::new(
                                         RichText::new(format!("{}", eq))
                                             .text_style(TextStyle::Monospace)
@@ -465,8 +513,8 @@ impl EApp for App {
 
                 plot.show(ui, |plot| match &self.method_result {
                     Some(result) => match result {
-                        MethodResult::Simple(eq, interval) => {
-                            show_line(plot, eq.clone(), *interval, self.precision)
+                        MethodResult::Simple(eq) | MethodResult::Derivative(eq) => {
+                            show_line(plot, eq.clone(), INFINITE_INTERVAL, self.precision)
                         }
                         MethodResult::Bisection(eq, (a, b), (x, y)) => {
                             show_line(plot, eq.clone(), (a - 1.0, b + 1.0), self.precision);
@@ -508,11 +556,17 @@ impl EApp for App {
                     .max_height(512.0)
                     .show_rows(
                         ui,
-                        ui.text_style_height(&TextStyle::Body),
+                        ui.text_style_height(&TextStyle::Monospace),
                         self.log.len(),
                         |scroll, range| {
                             range.for_each(|i| {
-                                scroll.add(Label::new(&self.log[i]).wrap(false));
+                                scroll.add(
+                                    Label::new(
+                                        RichText::new(&self.log[i])
+                                            .text_style(TextStyle::Monospace),
+                                    )
+                                    .wrap(false),
+                                );
                             })
                         },
                     );

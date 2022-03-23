@@ -72,8 +72,10 @@ fn main() -> Result<()> {
                 .help("Operations that need to be calculated")
                 .multiple_values(true)
                 .possible_values([
+                    PossibleValue::new("derivative")
+                        .help("Outputs derivative of given expression"),
                     PossibleValue::new("bisection")
-                        .help("The bisection method is an approximation method to find the roots of the given equation by repeatedly dividing the interval")
+                        .help("The bisection method is an approximation method to find the roots of the given equation by repeatedly dividing the interval"),
                 ])
                 .min_values(1)
                 .requires_all(&["expression", "interval", "precision", "limit"]),
@@ -93,6 +95,14 @@ fn main() -> Result<()> {
 
         for op in ops {
             match op {
+                "derivative" => {
+                    separator("Derivative");
+                    let derivative = expression.derivative().fix();
+                    match derivative.optimize() {
+                        Ok(expr) => println!("f' = {}", expr.fix()),
+                        Err(err) => println!("Failed to optimize derivative!\n\nError: {err}\n\nDerivative: {derivative}"),
+                    }
+                }
                 "bisection" => {
                     separator("Bisection method");
 

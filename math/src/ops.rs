@@ -2,7 +2,7 @@ use core::ops::{Add, Div, Mul, Sub};
 
 use crate::expression::{EvaluationError, EvaluationResult};
 
-#[derive(PartialOrd, PartialEq, Clone, Debug)]
+#[derive(PartialOrd, PartialEq, Clone, Copy, Debug)]
 pub enum Op {
     Sub = 1,
     Add,
@@ -25,6 +25,7 @@ impl Op {
     }
 
     pub fn calc(&self, lhs: f64, rhs: f64) -> EvaluationResult<f64> {
+        // FIX: Check calc with expr
         use Op::*;
 
         Ok(match self {

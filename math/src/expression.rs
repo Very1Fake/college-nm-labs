@@ -15,6 +15,13 @@ use super::{
 
 pub type EvaluationResult<T> = Result<T, EvaluationError>;
 
+#[inline]
+fn get_arg(args: &Vec<Expr>, id: usize) -> Expr {
+    args.get(id).expect("Arg not found").clone()
+}
+
+// -------------------------------------------------------------------------------------------------
+
 #[derive(Error, Debug)]
 pub enum EvaluationError {
     #[error("Variable '{0}' not found")]
@@ -68,7 +75,7 @@ pub enum Expr {
     MathConst(MathConst),
     Var(VarName),
     Op(Op, Box<(Self, Self)>),
-    Func(Func, Vec<Self>),
+    Fn(Func, Vec<Self>),
     Brackets(Box<Expr>),
     Neg(Box<Expr>),
 }
@@ -92,6 +99,328 @@ impl Expr {
             _ => false,
         }
     }
+
+    /// Check if `Expr` is `coef * variable[^exp]` (coef must be constant)
+    fn is_coef_term(&self) -> bool {
+        if let Self::Op(Op::Mul, ops) = self {
+            match &**ops {
+                (
+                    Self::Const(_) | Self::MathConst(_),
+                    var @ (Self::Var(_) | Self::Op(Op::Pow, _)),
+                ) => match var {
+                    Self::Var(_) => true,
+                    Self::Op(_, ops)
+                        if matches!(ops.0, Self::Var(_)) && matches!(ops.1, Self::Const(_)) =>
+                    {
+                        true
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Fix redundancy of the expression
+    pub fn fix(&self) -> Self {
+        match self {
+            Self::Op(op, ops) => {
+                match op {
+                    Op::Add | Op::Sub if matches!(ops.1, Self::Const(_)) => match ops.1 {
+                        // x ± 0 = x
+                        Self::Const(num) if num == 0.0 => ops.0.fix(),
+                        _ => match ops.0 {
+                            // 0 ± x = x
+                            Self::Const(num) if num == 0.0 => ops.1.fix(),
+                            _ => self.clone(),
+                        },
+                    },
+                    Op::Mul => match ops.1 {
+                        // x * 1 = x
+                        Self::Const(num) if num == 1.0 => ops.0.fix(),
+                        _ => match ops.0 {
+                            // 1 * x = x
+                            Self::Const(num) if num == 1.0 => ops.1.fix(),
+                            _ => Self::Op(*op, Box::new((ops.0.fix(), ops.1.fix()))),
+                        },
+                    },
+                    Op::Pow => match ops.1 {
+                        // x^1 = x
+                        Self::Const(num) if num == 1.0 => ops.0.fix(),
+                        _ => Self::Op(*op, Box::new((ops.0.fix(), ops.1.fix()))),
+                    },
+                    _ => Self::Op(*op, Box::new((ops.0.fix(), ops.1.fix()))),
+                }
+            }
+            Self::Fn(name, args) => {
+                Self::Fn(*name, args.into_iter().map(|expr| expr.fix()).collect())
+            }
+            Self::Brackets(expr) => expr.fix(),
+            Self::Neg(expr) => match &**expr {
+                // -(2) = -2
+                num @ Self::Const(_) => -num.clone(),
+                _ => Self::Neg(Box::new(expr.fix())),
+            },
+            Self::Const(_) | Self::MathConst(_) | Self::Var(_) => self.clone(),
+        }
+    }
+
+    // Shorten the expression
+    pub fn optimize(&self) -> EvaluationResult<Self> {
+        Ok(match self {
+            // Execute operation if both operands are constants
+            op @ Self::Op(_, ops) if matches!(**ops, (Self::Const(_), Self::Const(_))) => {
+                Self::Const(op.eval(&Scope::Empty)?)
+            }
+            // a * bx = abx
+            Self::Op(Op::Mul, ops)
+                if (matches!(ops.0, Self::Const(_)) || ops.0.is_coef_term())
+                    && (matches!(ops.1, Self::Const(_)) || ops.1.is_coef_term()) =>
+            {
+                match &**ops {
+                    (a @ Self::Const(_), Self::Op(Op::Mul, ops))
+                    | (Self::Op(Op::Mul, ops), a @ Self::Const(_)) => Self::Op(
+                        Op::Mul,
+                        Box::new((
+                            Self::Const((a.clone() * ops.0.clone()).eval(&Scope::Empty)?),
+                            ops.1.clone(),
+                        )),
+                    ),
+                    _ => unreachable!(),
+                }
+            }
+            Self::Op(op, ops) => {
+                let mut ops = ops.clone();
+                ops.0 = ops.0.optimize()?;
+                ops.1 = ops.1.optimize()?;
+                Self::Op(*op, ops).fix()
+            }
+            Self::Const(_)
+            | Self::MathConst(_)
+            | Self::Var(_)
+            | Self::Fn(..)
+            | Self::Brackets(_)
+            | Self::Neg(_) => self.clone(),
+        })
+    }
+
+    // TODO: Add u' table
+    pub fn derivative(&self) -> Self {
+        #[inline]
+        fn uv_mul(uv: &(Expr, Expr)) -> Expr {
+            let (u, v) = uv.clone();
+            Expr::Op(
+                Op::Mul,
+                Box::new((
+                    Expr::Op(Op::Pow, Box::new((u.clone(), v.clone()))),
+                    Expr::Op(Op::Mul, Box::new((v, Expr::Fn(Func::Ln, vec![u])))).derivative(),
+                )),
+            )
+        }
+
+        match self {
+            // a' = 0
+            Self::Const(_) => Self::Const(0.0),
+            // e' = 0
+            Self::MathConst(_) => Self::Const(0.0),
+            // x' = 1
+            Self::Var(_) => Self::Const(1.0),
+            Self::Op(op, ops) => match op {
+                // (a ± b)' = a' ± b'
+                Op::Sub | Op::Add => Self::Op(
+                    op.clone(),
+                    Box::new((ops.0.derivative(), ops.1.derivative())),
+                ),
+                Op::Mul => match &**ops {
+                    // (cx)' = c * x'
+                    (
+                        coef @ (Self::Const(_) | Self::MathConst(_)),
+                        f @ (Self::Var(_)
+                        | Self::Op(..)
+                        | Self::Fn(..)
+                        | Self::Brackets(_)
+                        | Self::Neg(_)),
+                    ) => Self::Op(Op::Mul, Box::new((coef.clone(), f.derivative()))),
+                    // (uv)' = u'v + uv'
+                    _ => Self::Op(
+                        Op::Add,
+                        Box::new((
+                            Self::Op(Op::Mul, Box::new((ops.0.derivative(), ops.1.clone()))),
+                            Self::Op(Op::Mul, Box::new((ops.0.clone(), ops.1.derivative()))),
+                        )),
+                    ),
+                },
+                // (u / v)' = (u'v - uv') / v^2
+                Op::Div => Self::Op(
+                    Op::Div,
+                    Box::new((
+                        Self::Brackets(Box::new(Self::Op(
+                            Op::Sub,
+                            Box::new((
+                                Self::Op(Op::Mul, Box::new((ops.0.derivative(), ops.1.clone()))),
+                                Self::Op(Op::Mul, Box::new((ops.0.clone(), ops.1.derivative()))),
+                            )),
+                        ))),
+                        Self::Op(Op::Pow, Box::new((ops.1.clone(), Self::Const(2.0)))),
+                    )),
+                ),
+                Op::Pow => match &**ops {
+                    // (e^x)' = e^x
+                    (Self::MathConst(MathConst::E), x @ Self::Var(_)) => Self::Op(
+                        Op::Pow,
+                        Box::new((Self::MathConst(MathConst::E), x.clone())),
+                    ),
+                    // (x^a)' = ax^a-1
+                    (
+                        x @ (Self::Var(_) | Self::Op(Op::Mul, _)),
+                        a @ (Self::Const(_) | Self::MathConst(_)),
+                    ) if matches!(x, Self::Var(_)) || x.is_coef_term() => Self::Op(
+                        Op::Pow,
+                        Box::new((
+                            Self::Op(Op::Mul, Box::new((a.clone(), x.clone()))),
+                            a.clone() - 1.0,
+                        )),
+                    ),
+                    // (a^x)' = a^x * ln(a)
+                    (
+                        a @ (Self::Const(_) | Self::MathConst(_)),
+                        x @ (Self::Var(_) | Self::Op(Op::Mul, _)),
+                    ) if matches!(x, Self::Var(_)) || x.is_coef_term() => Self::Op(
+                        Op::Mul,
+                        Box::new((
+                            Self::Op(Op::Pow, Box::new((a.clone(), x.clone()))),
+                            Self::Fn(Func::Ln, vec![a.clone()]),
+                        )),
+                    ),
+                    // (u^v)' = u^v * (v * ln(u))'
+                    uv => uv_mul(uv),
+                },
+            },
+            // TODO: Add a new match arm to find derivate of function argument if its not x
+            Self::Fn(func, args) => {
+                // Find derivatives of arguments if it's not x
+                // g(f(x))' =
+                let args = args
+                    .iter()
+                    .map(|expr| {
+                        if !matches!(expr, Self::Const(_) | Self::MathConst(_) | Self::Var(_)) {
+                            expr.derivative()
+                        } else {
+                            expr.clone()
+                        }
+                    })
+                    .collect::<Vec<Expr>>();
+
+                match func {
+                    // (√x)' = 1 / 2√x
+                    Func::Sqrt => Self::Op(
+                        Op::Div,
+                        Box::new((
+                            Self::Const(1.0),
+                            Self::Op(
+                                Op::Mul,
+                                Box::new((Self::Const(2.0), Self::Fn(Func::Sqrt, args.clone()))),
+                            ),
+                        )),
+                    ),
+                    // (|f|)' = |f'|
+                    Func::Abs => Self::Fn(Func::Abs, vec![get_arg(&args, 0).derivative()]),
+                    // (sin x)' = cos x
+                    Func::Sin => Self::Fn(Func::Cos, args.clone()),
+                    // (cos x)' = -sin x
+                    Func::Cos => Self::Neg(Box::new(Self::Fn(Func::Sin, args.clone()))),
+                    // (tan x)' = 1 / cos(x)^2
+                    Func::Tan => Self::Op(
+                        Op::Div,
+                        Box::new((
+                            Self::Const(1.0),
+                            Self::Op(
+                                Op::Pow,
+                                Box::new((Self::Fn(Func::Cos, args.clone()), Self::Const(2.0))),
+                            ),
+                        )),
+                    ),
+                    // (asin x)' = 1 / √(1 - x^2)
+                    Func::ASin => Self::Op(
+                        Op::Div,
+                        Box::new((
+                            Self::Const(1.0),
+                            Self::Fn(
+                                Func::Sqrt,
+                                vec![Self::Op(
+                                    Op::Sub,
+                                    Box::new((
+                                        Self::Const(1.0),
+                                        Self::Op(
+                                            Op::Pow,
+                                            Box::new((get_arg(&args, 0), Self::Const(2.0))),
+                                        ),
+                                    )),
+                                )],
+                            ),
+                        )),
+                    ),
+                    // (acos x)' = -(1 / √(1 - x^2))
+                    Func::ACos => Self::Neg(Box::new(Self::Op(
+                        Op::Div,
+                        Box::new((
+                            Self::Const(1.0),
+                            Self::Fn(
+                                Func::Sqrt,
+                                vec![Self::Op(
+                                    Op::Sub,
+                                    Box::new((
+                                        Self::Const(1.0),
+                                        Self::Op(
+                                            Op::Pow,
+                                            Box::new((get_arg(&args, 0), Self::Const(2.0))),
+                                        ),
+                                    )),
+                                )],
+                            ),
+                        )),
+                    ))),
+                    // (atan x)' = 1 / (1 + x^2)
+                    Func::ATan => Self::Op(
+                        Op::Div,
+                        Box::new((
+                            Self::Const(1.0),
+                            Self::Op(
+                                Op::Add,
+                                Box::new((
+                                    Self::Const(1.0),
+                                    Self::Op(
+                                        Op::Pow,
+                                        Box::new((get_arg(&args, 0), Self::Const(2.0))),
+                                    ),
+                                )),
+                            ),
+                        )),
+                    ),
+                    // (ln x)' = 1 / x
+                    Func::Ln => Self::Op(Op::Div, Box::new((Self::Const(1.0), get_arg(&args, 0)))),
+                    // (log_a x)' = 1 / (x * ln a)
+                    Func::Log => Self::Op(
+                        Op::Div,
+                        Box::new((
+                            Self::Const(1.0),
+                            Self::Op(
+                                Op::Mul,
+                                Box::new((
+                                    get_arg(&args, 0),
+                                    Self::Fn(Func::Ln, vec![get_arg(&args, 1)]),
+                                )),
+                            ),
+                        )),
+                    ),
+                }
+            }
+            Self::Brackets(expr) => Self::Brackets(Box::new(expr.derivative())),
+            Self::Neg(expr) => expr.derivative(),
+        }
+    }
 }
 
 impl Evaluable for Expr {
@@ -106,8 +435,9 @@ impl Evaluable for Expr {
                 None => Err(EvaluationError::VariableNotFound(name.clone())),
             },
             Op(op, ops) => Ok(op.calc(ops.0.eval(scope)?, ops.1.eval(scope)?)?),
-            Func(func, args) => Ok(func.eval(
-                args.iter()
+            Fn(func, args) => Ok(func.eval(
+                &args
+                    .iter()
                     .map(|expr| expr.eval(scope))
                     .collect::<EvaluationResult<Vec<f64>>>()?,
             )),
@@ -119,30 +449,49 @@ impl Evaluable for Expr {
 
 impl Default for Expr {
     fn default() -> Self {
-        Self::Const(1.0)
+        Self::Const(0.0)
     }
 }
 
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use Expr::*;
-
         match self {
-            Const(num) => f.write_str(&num.to_string()),
-            MathConst(constant) => f.write_str(constant.as_str()),
-            Var(name) => f.write_str(name),
-            Op(op, ops) => match op {
-                crate::ops::Op::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
-                crate::ops::Op::Mul => match **ops {
-                    (Expr::Const(_), Expr::Var(_) | Expr::Func(..)) => {
+            Self::Const(num) => f.write_str(&num.to_string()),
+            Self::MathConst(constant) => f.write_str(constant.as_str()),
+            Self::Var(name) => f.write_str(name),
+            Self::Op(op, ops) => match op {
+                Op::Pow => write!(f, "{}{}{}", ops.0, op.as_str(), ops.1),
+                Op::Mul => match **ops {
+                    (Expr::Const(_), Expr::Var(_) | Expr::Fn(..)) => {
                         ops.0.fmt(f)?;
                         ops.1.fmt(f)
                     }
+                    (Expr::Var(_) | Expr::Fn(..), Expr::Const(_)) => {
+                        ops.1.fmt(f)?;
+                        ops.0.fmt(f)
+                    }
                     _ => write!(f, "{} {} {}", ops.0, op.as_str(), ops.1),
                 },
+                Op::Div => {
+                    match &ops.0 {
+                        lhs @ Self::Op(Op::Sub | Op::Add | Op::Mul | Op::Div, _) => {
+                            write!(f, "({lhs})")?
+                        }
+                        lhs => lhs.fmt(f)?,
+                    }
+
+                    f.write_str(" / ")?;
+
+                    match &ops.1 {
+                        rhs @ Self::Op(Op::Sub | Op::Add | Op::Mul | Op::Div, _) => {
+                            write!(f, "({rhs})")
+                        }
+                        rhs => rhs.fmt(f),
+                    }
+                }
                 _ => write!(f, "{} {} {}", ops.0, op.as_str(), ops.1),
             },
-            Func(func, args) => {
+            Self::Fn(func, args) => {
                 f.write_str(func.as_str())?;
                 f.write_str("(")?;
                 for (i, expr) in args.iter().enumerate() {
@@ -153,11 +502,14 @@ impl fmt::Display for Expr {
                 }
                 f.write_str(")")
             }
-            Brackets(expr) => write!(f, "({expr})"),
-            Neg(expr) => {
-                f.write_str("-")?;
-                expr.fmt(f)
-            }
+            Self::Brackets(expr) => write!(f, "({expr})"),
+            Self::Neg(expr) => match &**expr {
+                expr @ Self::Op(..) => write!(f, "-({expr})"),
+                expr => {
+                    f.write_str("-")?;
+                    expr.fmt(f)
+                }
+            },
         }
     }
 }
@@ -325,31 +677,62 @@ impl From<f64> for Expr {
 impl Expr {
     /// Wraps self with parentheses if the given `Ops` has a higher priority
     pub fn brace_if(self, op: &Op) -> Self {
-        match &self {
-            Self::Op(inner, _) if inner < op => return Self::Brackets(Box::new(self)),
-            _ => (),
+        if let Self::Op(inner, _) = &self {
+            match op {
+                Op::Pow if self.is_coef_term() => (),
+                _ if inner < op => return Self::Brackets(Box::new(self)),
+                _ => (),
+            }
         }
 
         self
     }
 
     pub fn pow(self, rhs: Self) -> Self {
-        Expr::Op(
+        Self::Op(
             Op::Pow,
             Box::new((self.brace_if(&Op::Pow), rhs.brace_if(&Op::Pow))),
         )
     }
 
     pub fn powf(self, rhs: f64) -> Self {
-        Expr::Op(Op::Pow, Box::new((self.brace_if(&Op::Pow), rhs.into())))
+        Self::Op(Op::Pow, Box::new((self.brace_if(&Op::Pow), rhs.into())))
+    }
+
+    pub fn sqrt(self) -> Self {
+        Self::Fn(Func::Sqrt, vec![self])
     }
 
     pub fn sin(self) -> Self {
-        Expr::Func(Func::Sin, vec![self])
+        Self::Fn(Func::Sin, vec![self])
     }
 
     pub fn cos(self) -> Self {
-        Expr::Func(Func::Cos, vec![self])
+        Self::Fn(Func::Cos, vec![self])
+    }
+
+    pub fn tan(self) -> Self {
+        Self::Fn(Func::Tan, vec![self])
+    }
+
+    pub fn asin(self) -> Self {
+        Self::Fn(Func::ASin, vec![self])
+    }
+
+    pub fn acos(self) -> Self {
+        Self::Fn(Func::ACos, vec![self])
+    }
+
+    pub fn atan(self) -> Self {
+        Self::Fn(Func::ATan, vec![self])
+    }
+
+    pub fn ln(self) -> Self {
+        Self::Fn(Func::Ln, vec![self])
+    }
+
+    pub fn log(self, base: f64) -> Self {
+        Self::Fn(Func::Log, vec![self, Self::Const(base)])
     }
 }
 
@@ -360,18 +743,18 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        expression::{Evaluable, MathConst},
+        expression::{Evaluable, MathConst::E},
         variable::{Scope, Var},
     };
 
-    use super::Expr;
+    use super::{EvaluationResult, Expr};
 
     // Formats
 
     #[test]
     fn fmt_const() {
         let constant = Expr::Const(2.5);
-        let math_const = Expr::MathConst(MathConst::E);
+        let math_const = Expr::MathConst(E);
 
         assert_eq!(format!("{constant}"), "2.5");
         assert_eq!(format!("{math_const}"), "e");
@@ -396,7 +779,7 @@ mod tests {
     fn fmt_exp() {
         let exp_const = Expr::Const(25.0).powf(2.0);
         let exp_var = Expr::var("z").powf(4.0);
-        let exp_e = Expr::MathConst(MathConst::E).pow(Expr::var("x"));
+        let exp_e = Expr::MathConst(E).pow(Expr::var("x"));
 
         assert_eq!(format!("{exp_const}"), "25^2");
         assert_eq!(format!("{exp_var}"), "z^4");
@@ -416,7 +799,7 @@ mod tests {
     fn fmt_expr() {
         let expr_1 = Expr::Const(2.0) * Expr::var("x") + Expr::Const(12.75);
         let expr_2 = (4.5 + Expr::var("x")).powf(2.0) / 2.5;
-        let expr_3 = Expr::var("x") * Expr::MathConst(MathConst::E).pow(Expr::var("x")).sin();
+        let expr_3 = Expr::var("x") * Expr::MathConst(E).pow(Expr::var("x")).sin();
 
         assert_eq!(format!("{expr_1}"), "2x + 12.75");
         assert_eq!(format!("{expr_2}"), "(4.5 + x)^2 / 2.5");
@@ -477,6 +860,68 @@ mod tests {
         assert_eq!(expr_1.eval(&scope)?, 21.75);
         assert_eq!(expr_2.eval(&scope)?, 121.5);
         assert_eq!(expr_3.eval(&scope)?, 32.4);
+
+        Ok(())
+    }
+
+    // Derivative
+
+    #[test]
+    fn derivative_x_table() {
+        let cases = vec![
+            // c'
+            (Expr::Const(2.0), "0"),
+            // (√x)'
+            (Expr::var("x").sqrt(), "1 / (2sqrt(x))"),
+            // (x^a)'
+            (Expr::var("x").powf(4.0), "4x^4 - 1"),
+            // (a^x)'
+            (Expr::Const(3.0).pow(Expr::var("x")), "3^x * ln(3)"),
+            // (e^x)'
+            (Expr::MathConst(E).pow(Expr::var("x")), "e^x"),
+            // (ln x)'
+            (Expr::var("x").ln(), "1 / x"),
+            // (log x)'
+            (Expr::var("x").log(4.0), "1 / (x * ln(4))"),
+            // (sin x)'
+            (Expr::var("x").sin(), "cos(x)"),
+            // (cos x)'
+            (Expr::var("x").cos(), "-sin(x)"),
+            // (tg x)'
+            (Expr::var("x").tan(), "1 / cos(x)^2"),
+            // (asin x)'
+            (Expr::var("x").asin(), "1 / sqrt(1 - x^2)"),
+            // (acos x)'
+            (Expr::var("x").acos(), "-(1 / sqrt(1 - x^2))"),
+            // (atg x)'
+            (Expr::var("x").atan(), "1 / (1 + x^2)"),
+        ];
+
+        for (expr, expect) in cases {
+            assert_eq!(format!("{}", expr.derivative().fix()), expect);
+        }
+    }
+
+    #[test]
+    fn differentiation() -> EvaluationResult<()> {
+        let cases = vec![
+            // cx' = c * x'
+            (3.0 * Expr::var("x"), "3"),
+            // (u+v)' = u' + v'
+            (
+                (2.0 * Expr::var("x")).powf(2.0) + 4.0 * Expr::var("x"),
+                "4x + 4",
+            ),
+            // (uv)' = u' * v'
+            (
+                Expr::var("x").powf(4.0) * Expr::var("x").sin(),
+                "4x^3 * sin(x) + x^4 * cos(x)",
+            ),
+        ];
+
+        for (expr, expect) in cases {
+            assert_eq!(format!("{}", expr.derivative().fix().optimize()?), expect);
+        }
 
         Ok(())
     }

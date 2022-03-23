@@ -67,7 +67,7 @@ fn parse_fn_call(state: &ParserState, stream: &mut TokenStream, name: String) ->
 
         if let Some(func) = Func::parse(&name) {
             if args.len() == func.hint() as usize {
-                Ok(Expr::Func(func, args))
+                Ok(Expr::Fn(func, args))
             } else {
                 Err(ParseError::NotEnoughArguments(name, func.hint()))
             }
@@ -388,23 +388,20 @@ mod tests {
 
         assert_eq!(
             parse(input_cos)?,
-            Expr::Func(Func::Cos, vec![Expr::Const(2.0)])
+            Expr::Fn(Func::Cos, vec![Expr::Const(2.0)])
         );
 
         assert_eq!(
             parse(input_sin)?,
             Expr::Op(
                 Op::Mul,
-                Box::new((
-                    Expr::Const(2.0),
-                    Expr::Func(Func::Sin, vec![Expr::var("x")])
-                ))
+                Box::new((Expr::Const(2.0), Expr::Fn(Func::Sin, vec![Expr::var("x")])))
             )
         );
 
         assert_eq!(
             parse(input_tan)?,
-            Expr::Func(
+            Expr::Fn(
                 Func::Tan,
                 vec![Expr::Op(
                     Op::Mul,
